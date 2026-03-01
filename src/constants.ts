@@ -4,3 +4,4 @@ export const TOOL_NAME = "ask_user";
 export const STATE_ENTRY_TYPE = "copilot-queue:state";
 
 export const DEFAULT_FALLBACK_RESPONSE = "continue";
+export const ACTIVE_PROVIDER = "github-copilot";

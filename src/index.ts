@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import {
+  ACTIVE_PROVIDER,
   DEFAULT_FALLBACK_RESPONSE,
   EXTENSION_COMMAND,
   EXTENSION_NAME,
@@ -131,13 +132,17 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     name: TOOL_NAME,
     label: "Ask User (Queue-Aware)",
     description:
-      "Returns the next queued response first. If queue is empty, uses autopilot prompts in cycle mode. If no autopilot prompt is available, asks the user in UI mode or returns fallback response.",
+      "For github-copilot provider: returns the next queued response first, then autopilot prompts in cycle mode. Other providers use manual/fallback behavior.",
     parameters: Type.Object({
       prompt: Type.Optional(
         Type.String({ description: "Question to display when queue and autopilot are empty" })
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (ctx.model?.provider !== ACTIVE_PROVIDER) {
+        return askManuallyOrFallback(params.prompt, ctx, state.fallbackResponse);
+      }
+
       const queued = state.queue[0];
       if (queued) {
         state = { ...state, queue: state.queue.slice(1) };
@@ -165,24 +170,32 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
         };
       }
 
-      if (ctx.hasUI) {
-        const prompt =
-          params.prompt?.trim() ||
-          "Agent asked for feedback. Your response (blank = fallback response):";
-        const response = await ctx.ui.input("Copilot Queue", prompt);
-        const text = response?.trim() || state.fallbackResponse;
-        return {
-          content: [{ type: "text", text }],
-          details: { source: response?.trim() ? "manual" : "fallback", remaining: 0 },
-        };
-      }
-
-      return {
-        content: [{ type: "text", text: state.fallbackResponse }],
-        details: { source: "fallback", remaining: 0 },
-      };
+      return askManuallyOrFallback(params.prompt, ctx, state.fallbackResponse);
     },
   });
+}
+
+async function askManuallyOrFallback(
+  prompt: string | undefined,
+  ctx: ExtensionContext,
+  fallbackResponse: string
+) {
+  if (ctx.hasUI) {
+    const title = "Copilot Queue";
+    const question =
+      prompt?.trim() || "Agent asked for feedback. Your response (blank = fallback response):";
+    const response = await ctx.ui.input(title, question);
+    const text = response?.trim() || fallbackResponse;
+    return {
+      content: [{ type: "text" as const, text }],
+      details: { source: response?.trim() ? "manual" : "fallback", remaining: 0 },
+    };
+  }
+
+  return {
+    content: [{ type: "text" as const, text: fallbackResponse }],
+    details: { source: "fallback", remaining: 0 },
+  };
 }
 
 function initialState(): QueueState {

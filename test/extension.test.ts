@@ -135,6 +135,29 @@ void test("queue remains higher priority than autopilot", async () => {
   assert.equal(autopilotResult.details.source, "autopilot");
 });
 
+void test("non-copilot providers bypass queue and autopilot", async () => {
+  const captured: Captured = { entries: [] };
+  extension(createPi(captured));
+
+  assert.ok(captured.commandHandler);
+  assert.ok(captured.toolExecute);
+
+  await captured.commandHandler?.("add queued reply", createCommandCtx());
+  await captured.commandHandler?.("autopilot add auto reply", createCommandCtx());
+  await captured.commandHandler?.("autopilot on", createCommandCtx());
+
+  const result = (await captured.toolExecute?.(
+    "call-1",
+    {},
+    undefined,
+    undefined,
+    createToolCtx({ provider: "anthropic" })
+  )) as { content: { type: string; text: string }[]; details: { source: string } };
+
+  assert.equal(result.content[0]?.text, "continue");
+  assert.equal(result.details.source, "fallback");
+});
+
 void test("uses fallback when queue is empty and no UI", async () => {
   const captured: Captured = { entries: [] };
   extension(createPi(captured));
@@ -163,9 +186,10 @@ function createCommandCtx() {
   };
 }
 
-function createToolCtx() {
+function createToolCtx(options?: { provider?: string }) {
   return {
     hasUI: false,
+    model: { provider: options?.provider ?? "github-copilot" },
     ui: {
       input: () => Promise.resolve(undefined),
       notify: () => undefined,

@@ -10,6 +10,7 @@ This extension is inspired by [TaskSync](https://github.com/4regab/TaskSync)-sty
 - Registers command: `/copilot-queue`
 - Keeps a FIFO queue of responses
 - Supports autopilot prompt cycling (1→2→3→1…)
+- Activates queue/autopilot only on provider `github-copilot`
 - Persists state in session entries
 - Shows queue/autopilot state in Pi status line
 
@@ -19,6 +20,8 @@ When `ask_user` is called:
 2. Else if autopilot is enabled and has prompts → returns next autopilot prompt (cycling)
 3. Else in interactive UI → asks you for manual input
 4. Else → returns fallback response (`continue` by default)
+
+When current model provider is not `github-copilot`, queue/autopilot is bypassed and `ask_user` uses manual/fallback behavior only.
 
 ## Install
 
