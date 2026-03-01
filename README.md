@@ -13,8 +13,10 @@ This extension is inspired by [TaskSync](https://github.com/4regab/TaskSync)-sty
 - Activates queue/autopilot only on provider `github-copilot`
 - Injects Copilot-only `ask_user` loop policy into the system prompt on each new run
 - While Copilot is actively running, normal interactive input is captured into queue (instead of triggering a new turn)
+- Tracks session elapsed time and tool-call count in status line
+- Emits session hygiene warnings at configurable thresholds (default: 120 minutes, 50 tool calls)
 - Persists state in session entries
-- Shows queue/autopilot state in Pi status line
+- Shows queue/autopilot/session state in Pi status line
 
 When `ask_user` is called:
 
@@ -73,6 +75,18 @@ Then in Pi (GitHub source):
 ```
 
 This clears the queue, disables autopilot, and releases a waiting `ask_user` call with `done`.
+
+### Session counters and hygiene warnings
+
+```text
+/copilot-queue session status
+/copilot-queue session reset
+/copilot-queue session threshold 120 50
+```
+
+- Status line always includes elapsed time + tool-call count.
+- Warnings are advisory only (no forced stop).
+- Default thresholds are `120` minutes and `50` tool calls.
 
 ### Fallback message
 

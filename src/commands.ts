@@ -11,6 +11,9 @@ export type QueueCommand =
   | { name: "autopilot-add"; value: string }
   | { name: "autopilot-list" }
   | { name: "autopilot-clear" }
+  | { name: "session-reset" }
+  | { name: "session-status" }
+  | { name: "session-threshold"; minutes: string; toolCalls: string }
   | { name: "help" };
 
 export function buildHelpText(): string {
@@ -25,6 +28,9 @@ export function buildHelpText(): string {
     `/${EXTENSION_COMMAND} autopilot add <message>`,
     `/${EXTENSION_COMMAND} autopilot list`,
     `/${EXTENSION_COMMAND} autopilot clear`,
+    `/${EXTENSION_COMMAND} session status`,
+    `/${EXTENSION_COMMAND} session reset`,
+    `/${EXTENSION_COMMAND} session threshold <minutes> <tool-calls>`,
     `/${EXTENSION_COMMAND} help`,
   ].join("\n");
 }
@@ -50,6 +56,8 @@ export function parseCommand(raw: string): QueueCommand {
       return { name: "done" };
     case "autopilot":
       return parseAutopilot(rest);
+    case "session":
+      return parseSession(rest);
     default:
       return { name: "help" };
   }
@@ -75,6 +83,28 @@ function parseAutopilot(raw: string): QueueCommand {
       return { name: "autopilot-list" };
     case "clear":
       return { name: "autopilot-clear" };
+    default:
+      return { name: "help" };
+  }
+}
+
+function parseSession(raw: string): QueueCommand {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return { name: "help" };
+
+  const parts = trimmed.split(/\s+/);
+  const subcommand = parts[0]?.toLowerCase();
+
+  switch (subcommand) {
+    case "reset":
+      return { name: "session-reset" };
+    case "status":
+      return { name: "session-status" };
+    case "threshold": {
+      const minutes = parts[1] ?? "";
+      const toolCalls = parts[2] ?? "";
+      return { name: "session-threshold", minutes, toolCalls };
+    }
     default:
       return { name: "help" };
   }

@@ -4,6 +4,8 @@ import {
   ACTIVE_PROVIDER,
   COPILOT_ASK_USER_POLICY,
   DEFAULT_FALLBACK_RESPONSE,
+  DEFAULT_WARNING_MINUTES,
+  DEFAULT_WARNING_TOOL_CALLS,
   EXTENSION_COMMAND,
   EXTENSION_NAME,
   STATE_ENTRY_TYPE,
@@ -53,6 +55,21 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     return {
       systemPrompt: `${event.systemPrompt}\n\n${COPILOT_ASK_USER_POLICY}`,
     };
+  });
+
+  pi.on("tool_call", (_event, ctx) => {
+    if (ctx.model?.provider !== ACTIVE_PROVIDER) {
+      return;
+    }
+
+    let nextState: QueueState = {
+      ...state,
+      toolCallCount: state.toolCallCount + 1,
+    };
+    nextState = applySessionWarnings(nextState, ctx);
+    state = nextState;
+    persistState(pi, state);
+    updateStatus(ctx, state, hasPendingAskUser());
   });
 
   pi.on("input", (event, ctx) => {
@@ -201,6 +218,51 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
           return Promise.resolve();
         }
 
+        case "session-status": {
+          notify(ctx, buildSessionStatusText(state));
+          return Promise.resolve();
+        }
+
+        case "session-reset": {
+          state = {
+            ...state,
+            sessionStartedAt: Date.now(),
+            toolCallCount: 0,
+            warnedTime: false,
+            warnedToolCalls: false,
+          };
+          persistState(pi, state);
+          updateStatus(ctx, state, hasPendingAskUser());
+          notify(ctx, "Session counters reset.");
+          return Promise.resolve();
+        }
+
+        case "session-threshold": {
+          const minutes = parsePositiveInt(command.minutes);
+          const toolCalls = parsePositiveInt(command.toolCalls);
+          if (minutes === undefined || toolCalls === undefined) {
+            notify(ctx, `Usage: /${EXTENSION_COMMAND} session threshold <minutes> <tool-calls>`);
+            return Promise.resolve();
+          }
+
+          let nextState: QueueState = {
+            ...state,
+            warningMinutes: minutes,
+            warningToolCalls: toolCalls,
+            warnedTime: false,
+            warnedToolCalls: false,
+          };
+          nextState = applySessionWarnings(nextState, ctx);
+          state = nextState;
+          persistState(pi, state);
+          updateStatus(ctx, state, hasPendingAskUser());
+          notify(
+            ctx,
+            `Session warning thresholds updated: ${state.warningMinutes} minutes, ${state.warningToolCalls} tool calls.`
+          );
+          return Promise.resolve();
+        }
+
         case "help":
         default:
           notify(ctx, buildHelpText());
@@ -277,6 +339,54 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
       };
     },
   });
+
+  function applySessionWarnings(
+    current: QueueState,
+    ctx: { hasUI: boolean; ui: { notify: (message: string, level: "info" | "warning") => void } }
+  ): QueueState {
+    let next = current;
+    const elapsedMinutes = getElapsedMinutes(next);
+
+    if (!next.warnedTime && elapsedMinutes >= next.warningMinutes) {
+      next = { ...next, warnedTime: true };
+      notify(
+        ctx,
+        `Session hygiene warning: ${formatElapsed(next)} elapsed. Consider starting a new session after 2-4 hours or around 50 tool calls.`,
+        "warning"
+      );
+    }
+
+    if (!next.warnedToolCalls && next.toolCallCount >= next.warningToolCalls) {
+      next = { ...next, warnedToolCalls: true };
+      notify(
+        ctx,
+        `Session hygiene warning: ${next.toolCallCount} tool calls reached. Consider starting a new session after 2-4 hours or around 50 tool calls.`,
+        "warning"
+      );
+    }
+
+    return next;
+  }
+}
+
+function parsePositiveInt(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  if (!Number.isInteger(value) || value <= 0) return undefined;
+  return value;
+}
+
+function buildSessionStatusText(state: QueueState): string {
+  const elapsed = formatElapsed(state);
+  return [
+    `Session status:`,
+    `- Elapsed: ${elapsed}`,
+    `- Tool calls: ${state.toolCallCount}`,
+    `- Warning thresholds: ${state.warningMinutes} minutes, ${state.warningToolCalls} tool calls`,
+    `- Time warning emitted: ${state.warnedTime ? "yes" : "no"}`,
+    `- Tool-call warning emitted: ${state.warnedToolCalls ? "yes" : "no"}`,
+  ].join("\n");
 }
 
 async function askManuallyOrFallback(
@@ -305,7 +415,7 @@ async function askManuallyOrFallback(
 async function waitForQueueInput(options: {
   prompt: string | undefined;
   signal: AbortSignal | undefined;
-  ctx: { hasUI: boolean; ui: { notify: (message: string, level: "info") => void } };
+  ctx: { hasUI: boolean; ui: { notify: (message: string, level: "info" | "warning") => void } };
   fallbackResponse: string;
   isWaiting: () => boolean;
   markWaiting: (resolve: (text: string) => void) => void;
@@ -348,6 +458,12 @@ function initialState(): QueueState {
     autopilotEnabled: false,
     autopilotPrompts: [],
     autopilotIndex: 0,
+    sessionStartedAt: Date.now(),
+    toolCallCount: 0,
+    warningMinutes: DEFAULT_WARNING_MINUTES,
+    warningToolCalls: DEFAULT_WARNING_TOOL_CALLS,
+    warnedTime: false,
+    warnedToolCalls: false,
   };
 }
 
@@ -365,9 +481,10 @@ function updateStatus(
     ? `autopilot:${state.autopilotPrompts.length}`
     : "autopilot:off";
   const waiting = waitingForQueue ? " | waiting:input" : "";
+  const session = `${formatElapsed(state)} · ${state.toolCallCount} tools`;
   ctx.ui.setStatus(
     EXTENSION_COMMAND,
-    `${EXTENSION_NAME}: ${state.queue.length} queued${waiting} | ${autopilot}`
+    `${EXTENSION_NAME}: ${state.queue.length} queued${waiting} | ${autopilot} | ${session}`
   );
 }
 
@@ -392,6 +509,12 @@ function parseQueueState(value: unknown): QueueState | undefined {
     autopilotEnabled?: unknown;
     autopilotPrompts?: unknown;
     autopilotIndex?: unknown;
+    sessionStartedAt?: unknown;
+    toolCallCount?: unknown;
+    warningMinutes?: unknown;
+    warningToolCalls?: unknown;
+    warnedTime?: unknown;
+    warnedToolCalls?: unknown;
   };
 
   if (
@@ -412,21 +535,73 @@ function parseQueueState(value: unknown): QueueState | undefined {
   const rawIndex = typeof candidate.autopilotIndex === "number" ? candidate.autopilotIndex : 0;
   const autopilotIndex = Number.isInteger(rawIndex) && rawIndex >= 0 ? rawIndex : 0;
 
+  const rawStartedAt =
+    typeof candidate.sessionStartedAt === "number" ? candidate.sessionStartedAt : Date.now();
+  const sessionStartedAt =
+    Number.isFinite(rawStartedAt) && rawStartedAt > 0 ? rawStartedAt : Date.now();
+
+  const rawToolCallCount =
+    typeof candidate.toolCallCount === "number" ? candidate.toolCallCount : 0;
+  const toolCallCount =
+    Number.isInteger(rawToolCallCount) && rawToolCallCount >= 0 ? rawToolCallCount : 0;
+
+  const rawWarningMinutes =
+    typeof candidate.warningMinutes === "number"
+      ? candidate.warningMinutes
+      : DEFAULT_WARNING_MINUTES;
+  const warningMinutes =
+    Number.isInteger(rawWarningMinutes) && rawWarningMinutes > 0
+      ? rawWarningMinutes
+      : DEFAULT_WARNING_MINUTES;
+
+  const rawWarningToolCalls =
+    typeof candidate.warningToolCalls === "number"
+      ? candidate.warningToolCalls
+      : DEFAULT_WARNING_TOOL_CALLS;
+  const warningToolCalls =
+    Number.isInteger(rawWarningToolCalls) && rawWarningToolCalls > 0
+      ? rawWarningToolCalls
+      : DEFAULT_WARNING_TOOL_CALLS;
+
+  const warnedTime = typeof candidate.warnedTime === "boolean" ? candidate.warnedTime : false;
+  const warnedToolCalls =
+    typeof candidate.warnedToolCalls === "boolean" ? candidate.warnedToolCalls : false;
+
   return {
     queue: candidate.queue,
     fallbackResponse: candidate.fallbackResponse,
     autopilotEnabled,
     autopilotPrompts,
     autopilotIndex,
+    sessionStartedAt,
+    toolCallCount,
+    warningMinutes,
+    warningToolCalls,
+    warnedTime,
+    warnedToolCalls,
   };
 }
 
+function getElapsedMinutes(state: QueueState): number {
+  const elapsedMs = Math.max(0, Date.now() - state.sessionStartedAt);
+  return Math.floor(elapsedMs / 60000);
+}
+
+function formatElapsed(state: QueueState): string {
+  const elapsedMs = Math.max(0, Date.now() - state.sessionStartedAt);
+  const totalMinutes = Math.floor(elapsedMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h${String(minutes).padStart(2, "0")}m`;
+}
+
 function notify(
-  ctx: { hasUI: boolean; ui: { notify: (message: string, level: "info") => void } },
-  message: string
+  ctx: { hasUI: boolean; ui: { notify: (message: string, level: "info" | "warning") => void } },
+  message: string,
+  level: "info" | "warning" = "info"
 ): void {
   if (ctx.hasUI) {
-    ctx.ui.notify(message, "info");
+    ctx.ui.notify(message, level);
   } else {
     console.log(message);
   }

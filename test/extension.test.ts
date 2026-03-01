@@ -59,7 +59,7 @@ void test("injects ask_user policy for github-copilot", () => {
     { model: { provider: "github-copilot" } }
   ) as { systemPrompt: string };
 
-  assert.match(result.systemPrompt, /use the ask_user tool/i);
+  assert.match(result.systemPrompt, /call the ask_user tool/i);
 });
 
 void test("interactive input during active run is queued instead of sent", async () => {
@@ -133,6 +133,49 @@ void test("done command releases waiting ask_user", async () => {
   const waitingResult = await waitingResultPromise;
   assert.equal(waitingResult.content[0]?.text, "done");
   assert.equal(waitingResult.details.source, "done");
+});
+
+void test("session status and reset commands work", async () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  const notifications: string[] = [];
+  const toolCallHook = captured.eventHandlers.get("tool_call");
+
+  assert.ok(captured.commandHandler);
+  assert.ok(toolCallHook);
+
+  toolCallHook?.({}, createToolCtx());
+  await captured.commandHandler?.("session status", createCommandCtx(notifications, true));
+  assert.ok(notifications.some((line) => line.includes("Session status:")));
+  assert.ok(notifications.some((line) => line.includes("Tool calls: 1")));
+
+  await captured.commandHandler?.("session reset", createCommandCtx(notifications, true));
+  const lastState = captured.entries[captured.entries.length - 1]?.data as {
+    toolCallCount: number;
+  };
+  assert.equal(lastState.toolCallCount, 0);
+});
+
+void test("tool-call warning fires at configurable threshold", async () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  const notifications: string[] = [];
+  const toolCallHook = captured.eventHandlers.get("tool_call");
+
+  assert.ok(captured.commandHandler);
+  assert.ok(toolCallHook);
+
+  await captured.commandHandler?.("session threshold 999 2", createCommandCtx(notifications));
+  toolCallHook?.({}, createToolCtx({ hasUI: true, notifications }));
+  toolCallHook?.({}, createToolCtx({ hasUI: true, notifications }));
+
+  assert.ok(
+    notifications.some(
+      (line) => line.includes("Session hygiene warning") && line.includes("2 tool calls reached")
+    )
+  );
 });
 
 void test("does not inject ask_user policy for non-copilot provider", () => {
@@ -283,35 +326,35 @@ void test("uses fallback when queue is empty and no UI", async () => {
   assert.equal(result.details.source, "fallback");
 });
 
-function createCommandCtx() {
+function createCommandCtx(notifications?: string[], hasUI = false) {
   return {
-    hasUI: false,
+    hasUI,
     ui: {
-      notify: () => undefined,
+      notify: (message: string) => notifications?.push(message),
       setStatus: () => undefined,
     },
   };
 }
 
-function createToolCtx(options?: { provider?: string; hasUI?: boolean }) {
+function createToolCtx(options?: { provider?: string; hasUI?: boolean; notifications?: string[] }) {
   return {
     hasUI: options?.hasUI ?? false,
     model: { provider: options?.provider ?? "github-copilot" },
     ui: {
       input: () => Promise.resolve(undefined),
-      notify: () => undefined,
+      notify: (message: string) => options?.notifications?.push(message),
       setStatus: () => undefined,
     },
   };
 }
 
-function createInputCtx(options: { idle: boolean; provider?: string }) {
+function createInputCtx(options: { idle: boolean; provider?: string; notifications?: string[] }) {
   return {
     hasUI: false,
     model: { provider: options.provider ?? "github-copilot" },
     isIdle: () => options.idle,
     ui: {
-      notify: () => undefined,
+      notify: (message: string) => options.notifications?.push(message),
       setStatus: () => undefined,
     },
   };

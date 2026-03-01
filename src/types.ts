@@ -4,4 +4,10 @@ export interface QueueState {
   autopilotEnabled: boolean;
   autopilotPrompts: string[];
   autopilotIndex: number;
+  sessionStartedAt: number;
+  toolCallCount: number;
+  warningMinutes: number;
+  warningToolCalls: number;
+  warnedTime: boolean;
+  warnedToolCalls: boolean;
 }

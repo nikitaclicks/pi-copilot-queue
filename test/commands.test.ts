@@ -21,6 +21,22 @@ void test("parseCommand parses done", () => {
   assert.deepEqual(parseCommand("done"), { name: "done" });
 });
 
+void test("parseCommand parses session status", () => {
+  assert.deepEqual(parseCommand("session status"), { name: "session-status" });
+});
+
+void test("parseCommand parses session reset", () => {
+  assert.deepEqual(parseCommand("session reset"), { name: "session-reset" });
+});
+
+void test("parseCommand parses session threshold", () => {
+  assert.deepEqual(parseCommand("session threshold 180 75"), {
+    name: "session-threshold",
+    minutes: "180",
+    toolCalls: "75",
+  });
+});
+
 void test("parseCommand returns help for unknown", () => {
   assert.deepEqual(parseCommand("wat"), { name: "help" });
 });
@@ -31,4 +47,5 @@ void test("help includes key commands", () => {
   assert.match(help, /copilot-queue clear/);
   assert.match(help, /copilot-queue done/);
   assert.match(help, /copilot-queue autopilot on/);
+  assert.match(help, /copilot-queue session reset/);
 });
