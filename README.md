@@ -11,6 +11,8 @@ This extension is inspired by [TaskSync](https://github.com/4regab/TaskSync)-sty
 - Keeps a FIFO queue of responses
 - Supports autopilot prompt cycling (1→2→3→1…)
 - Activates queue/autopilot only on provider `github-copilot`
+- Injects Copilot-only `ask_user` loop policy into the system prompt on each new run
+- While Copilot is actively running, normal interactive input is captured into queue (instead of triggering a new turn)
 - Persists state in session entries
 - Shows queue/autopilot state in Pi status line
 

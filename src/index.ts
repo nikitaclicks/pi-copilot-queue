@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 import { Type } from "@sinclair/typebox";
 import {
   ACTIVE_PROVIDER,
+  COPILOT_ASK_USER_POLICY,
   DEFAULT_FALLBACK_RESPONSE,
   EXTENSION_COMMAND,
   EXTENSION_NAME,
@@ -23,6 +24,41 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
   pi.on("session_switch", (_event, ctx) => syncState(ctx));
   pi.on("session_tree", (_event, ctx) => syncState(ctx));
   pi.on("session_fork", (_event, ctx) => syncState(ctx));
+
+  pi.on("before_agent_start", (event, ctx) => {
+    if (ctx.model?.provider !== ACTIVE_PROVIDER) {
+      return;
+    }
+
+    return {
+      systemPrompt: `${event.systemPrompt}\n\n${COPILOT_ASK_USER_POLICY}`,
+    };
+  });
+
+  pi.on("input", (event, ctx) => {
+    if (ctx.model?.provider !== ACTIVE_PROVIDER) {
+      return { action: "continue" };
+    }
+
+    if (event.source !== "interactive") {
+      return { action: "continue" };
+    }
+
+    if (ctx.isIdle()) {
+      return { action: "continue" };
+    }
+
+    const text = event.text.trim();
+    if (!text) {
+      return { action: "handled" };
+    }
+
+    state = { ...state, queue: [...state.queue, text] };
+    persistState(pi, state);
+    updateStatus(ctx, state);
+    notify(ctx, `Busy run: queued follow-up (#${state.queue.length}).`);
+    return { action: "handled" };
+  });
 
   pi.registerCommand(EXTENSION_COMMAND, {
     description: "Queue responses for ask_user tool calls",
