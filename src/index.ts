@@ -20,6 +20,7 @@ const DONE_RESPONSE = "done";
 export default function copilotQueueExtension(pi: ExtensionAPI) {
   let state: QueueState = initialState();
   let pendingAskUserResolve: ((text: string) => void) | undefined;
+  let reinjectPolicyAfterCompaction = false;
 
   function hasPendingAskUser(): boolean {
     return Boolean(pendingAskUserResolve);
@@ -47,6 +48,34 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
   pi.on("session_switch", (_event, ctx) => syncState(ctx));
   pi.on("session_tree", (_event, ctx) => syncState(ctx));
   pi.on("session_fork", (_event, ctx) => syncState(ctx));
+  pi.on("session_compact", (_event, ctx) => {
+    reinjectPolicyAfterCompaction = true;
+    // Compaction can prune earlier custom entries; persist current state again
+    // so queue/autopilot/session settings remain available after reloads.
+    persistState(pi, state);
+    updateStatus(ctx, state, hasPendingAskUser());
+  });
+  pi.on("context", (event, ctx) => {
+    if (ctx.model?.provider !== ACTIVE_PROVIDER) {
+      return;
+    }
+    if (!reinjectPolicyAfterCompaction) {
+      return;
+    }
+
+    reinjectPolicyAfterCompaction = false;
+    const reinforcementMessage = {
+      role: "custom",
+      customType: "copilot-queue:policy-reinforcement",
+      content: COPILOT_ASK_USER_POLICY,
+      display: false,
+      timestamp: Date.now(),
+    } as (typeof event.messages)[number];
+
+    return {
+      messages: [...event.messages, reinforcementMessage],
+    };
+  });
 
   pi.on("before_agent_start", (event, ctx) => {
     if (ctx.model?.provider !== ACTIVE_PROVIDER) {

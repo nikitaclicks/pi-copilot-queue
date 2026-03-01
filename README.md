@@ -29,7 +29,33 @@ When current model provider is not `github-copilot`, queue/autopilot is bypassed
 
 ## Install
 
-### Option 1: Direct with Pi
+### Option 1: Direct with Pi (npm or git)
+
+Install from npm:
+
+```bash
+pi install npm:pi-copilot-queue
+```
+
+Install from git:
+
+```bash
+pi install git:github.com/ayagmar/pi-copilot-queue
+```
+
+Pinned to a specific release tag:
+
+```bash
+pi install git:github.com/ayagmar/pi-copilot-queue@v0.1.1
+```
+
+Project-local install (writes to `.pi/settings.json`):
+
+```bash
+pi install -l git:github.com/ayagmar/pi-copilot-queue
+```
+
+Install from local path:
 
 ```bash
 pi install /absolute/path/to/pi-copilot-queue
@@ -53,6 +79,20 @@ Then in Pi (GitHub source):
 
 ```text
 /extensions install git:github.com/ayagmar/pi-copilot-queue
+/reload
+```
+
+Or install the extension file directly from GitHub (`index.ts`/entrypoint path):
+
+```text
+/extensions install https://github.com/ayagmar/pi-copilot-queue/blob/master/src/index.ts
+/reload
+```
+
+You can also install a local extension file directly:
+
+```text
+/extensions install /absolute/path/to/pi-copilot-queue/src/index.ts
 /reload
 ```
 

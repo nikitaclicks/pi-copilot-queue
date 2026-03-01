@@ -156,6 +156,51 @@ void test("wait timeout returns fallback when no queued input arrives", async ()
   assert.equal(waitingResult.details.source, "fallback");
 });
 
+void test("session compact persists current queue state", async () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  assert.ok(captured.commandHandler);
+  const compactHook = captured.eventHandlers.get("session_compact");
+  assert.ok(compactHook);
+
+  await captured.commandHandler?.("add preserve me", createCommandCtx());
+
+  const beforeCount = captured.entries.length;
+  compactHook?.({}, createToolCtx());
+
+  const lastEntry = captured.entries[captured.entries.length - 1];
+  assert.ok(lastEntry);
+  assert.equal(captured.entries.length, beforeCount + 1);
+  assert.equal(lastEntry?.customType, "copilot-queue:state");
+  assert.deepEqual((lastEntry?.data as { queue?: string[] }).queue, ["preserve me"]);
+});
+
+void test("session compact schedules one-time ask_user policy reinforcement", () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  const compactHook = captured.eventHandlers.get("session_compact");
+  const contextHook = captured.eventHandlers.get("context");
+
+  assert.ok(compactHook);
+  assert.ok(contextHook);
+
+  compactHook?.({}, createToolCtx());
+
+  const first = contextHook?.({ messages: [] }, createToolCtx()) as
+    | { messages?: Array<{ role?: string; customType?: string; content?: string }> }
+    | undefined;
+  assert.ok(first?.messages);
+  assert.equal(first?.messages?.length, 1);
+  assert.equal(first?.messages?.[0]?.role, "custom");
+  assert.equal(first?.messages?.[0]?.customType, "copilot-queue:policy-reinforcement");
+  assert.match(first?.messages?.[0]?.content ?? "", /call the ask_user tool/i);
+
+  const second = contextHook?.({ messages: [] }, createToolCtx());
+  assert.equal(second, undefined);
+});
+
 void test("session status and reset commands work", async () => {
   const captured = createCaptured();
   extension(createPi(captured));
