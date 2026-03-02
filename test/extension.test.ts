@@ -399,7 +399,7 @@ void test("status line is cleared when model switches away from github-copilot",
   const captured = createCaptured();
   extension(createPi(captured));
 
-  const statuses: { key: string; text?: string }[] = [];
+  const statuses: { key: string; text: string | undefined }[] = [];
   const modelSelectHook = captured.eventHandlers.get("model_select");
 
   assert.ok(captured.commandHandler);
@@ -437,7 +437,7 @@ function createCommandCtx(
   notifications?: string[],
   hasUI = false,
   provider = "github-copilot",
-  statuses?: { key: string; text?: string }[]
+  statuses?: { key: string; text: string | undefined }[]
 ) {
   return {
     hasUI,
@@ -453,7 +453,7 @@ function createToolCtx(options?: {
   provider?: string;
   hasUI?: boolean;
   notifications?: string[];
-  statuses?: { key: string; text?: string }[];
+  statuses?: { key: string; text: string | undefined }[];
 }) {
   return {
     hasUI: options?.hasUI ?? false,

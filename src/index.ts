@@ -25,7 +25,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     return Boolean(pendingAskUserResolve);
   }
 
-  function isCopilotProvider(ctx: { model?: { provider?: string } }): boolean {
+  function isCopilotProvider(ctx: Pick<ExtensionContext, "model">): boolean {
     return ctx.model?.provider === ACTIVE_PROVIDER;
   }
 
@@ -33,7 +33,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     text: string,
     ctx: {
       hasUI: boolean;
-      model?: { provider?: string };
+      model: ExtensionContext["model"];
       ui: { setStatus: (key: string, text?: string) => void };
     }
   ): boolean {
@@ -577,7 +577,7 @@ function persistState(pi: ExtensionAPI, state: QueueState): void {
 function updateStatus(
   ctx: {
     hasUI: boolean;
-    model?: { provider?: string };
+    model: ExtensionContext["model"];
     ui: { setStatus: (key: string, text?: string) => void };
   },
   state: QueueState,
