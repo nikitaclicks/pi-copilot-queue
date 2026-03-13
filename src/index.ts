@@ -401,7 +401,6 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
       }
 
       const text = await waitForQueueInput({
-        prompt: params.prompt,
         signal,
         ctx,
         fallbackResponse: state.fallbackResponse,
@@ -505,7 +504,6 @@ async function askManuallyOrFallback(
 }
 
 async function waitForQueueInput(options: {
-  prompt: string | undefined;
   signal: AbortSignal | undefined;
   ctx: { hasUI: boolean; ui: { notify: (message: string, level: "info" | "warning") => void } };
   fallbackResponse: string;
@@ -513,14 +511,13 @@ async function waitForQueueInput(options: {
   isWaiting: () => boolean;
   markWaiting: (resolve: (text: string) => void) => void;
 }): Promise<{ value: string; source: "queue-live" | "done" | "timeout" }> {
-  const { prompt, signal, ctx, fallbackResponse, timeoutSeconds, isWaiting, markWaiting } = options;
+  const { signal, ctx, fallbackResponse, timeoutSeconds, isWaiting, markWaiting } = options;
 
   if (signal?.aborted) {
     return { value: fallbackResponse, source: "timeout" };
   }
 
   if (!isWaiting()) {
-    const question = prompt?.trim() ?? "Agent requested feedback.";
     const timeoutText =
       timeoutSeconds > 0
         ? ` Waiting up to ${timeoutSeconds} seconds before fallback.`
