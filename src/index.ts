@@ -201,6 +201,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
 
   pi.registerCommand(EXTENSION_COMMAND, {
     description: "Queue responses for ask_user tool calls",
+    getArgumentCompletions: (prefix: string) => buildProviderArgumentCompletions(prefix),
     handler: (args, ctx) => {
       const command = parseCommand(args);
 
@@ -667,6 +668,40 @@ function parseProviderScope(raw: string): { scope: "project" | "global"; value: 
   }
 
   return { scope: "project", value: raw };
+}
+
+function buildProviderArgumentCompletions(
+  prefix: string
+): { value: string; label: string }[] | null {
+  const trimmed = prefix.trim();
+  const suggestions = getProviderSuggestions(trimmed);
+
+  if (suggestions.length === 0) {
+    return null;
+  }
+
+  return suggestions.map((value) => ({ value, label: value }));
+}
+
+function getProviderSuggestions(prefix: string): string[] {
+  const items = ["global", "project", "show", "list", "status", "set", "off", "clear"];
+  if (!prefix) {
+    return items;
+  }
+
+  const tokens = prefix.split(/\s+/);
+  if (tokens.length === 1) {
+    return items.filter((item) => item.startsWith(tokens[0] ?? ""));
+  }
+
+  const scope = tokens[0]?.toLowerCase();
+  if (scope === "global" || scope === "project") {
+    return ["set", "off", "clear", "show", "list", "status"].filter((item) =>
+      item.startsWith(tokens[tokens.length - 1] ?? "")
+    );
+  }
+
+  return items.filter((item) => item.startsWith(tokens[tokens.length - 1] ?? ""));
 }
 
 function refreshConfiguredProviders(cwd: string = process.cwd()): void {

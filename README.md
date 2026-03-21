@@ -151,6 +151,7 @@ You can also manage the project or global override from inside Pi:
 - Passing one or more provider names writes `.pi/settings.json` for the current project.
 - Prefixing with `global` writes `~/.pi/agent/settings.json` instead.
 - `off` writes an empty provider list for the selected scope.
+- Tab completion suggests the provider subcommands (`global`, `project`, `off`, `show`, `list`, `status`, `set`).
 
 ## Usage
 

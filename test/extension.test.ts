@@ -10,6 +10,7 @@ import { EXTENSION_COMMAND, TOOL_NAME } from "../src/constants.js";
 interface Captured {
   commandName?: string;
   commandHandler?: (args: string, ctx: unknown) => Promise<void>;
+  commandCompletions?: ((prefix: string) => { value: string; label: string }[] | null) | undefined;
   toolName?: string;
   toolExecute?: (...args: unknown[]) => Promise<unknown>;
   entries: { type: "custom"; customType: string; data: unknown }[];
@@ -26,10 +27,14 @@ function createPi(captured: Captured): ExtensionAPI {
     },
     registerCommand: (
       name: string,
-      def: { handler: (args: string, ctx: unknown) => Promise<void> }
+      def: {
+        handler: (args: string, ctx: unknown) => Promise<void>;
+        getArgumentCompletions?: (prefix: string) => { value: string; label: string }[] | null;
+      }
     ) => {
       captured.commandName = name;
       captured.commandHandler = def.handler;
+      captured.commandCompletions = def.getArgumentCompletions;
     },
     registerTool: (def: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
       captured.toolName = def.name;
@@ -57,6 +62,19 @@ void test("registers expected command and tool", () => {
 
   assert.equal(captured.commandName, EXTENSION_COMMAND);
   assert.equal(captured.toolName, TOOL_NAME);
+});
+
+void test("provides completions for provider subcommands", () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  assert.ok(captured.commandCompletions);
+
+  const topLevel = captured.commandCompletions?.("g") ?? [];
+  assert.ok(topLevel.some((item) => item.value === "global"));
+
+  const scoped = captured.commandCompletions?.("global o") ?? [];
+  assert.ok(scoped.some((item) => item.value === "off"));
 });
 
 void test("injects ask_user policy for github-copilot", () => {
