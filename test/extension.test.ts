@@ -64,17 +64,18 @@ void test("registers expected command and tool", () => {
   assert.equal(captured.toolName, TOOL_NAME);
 });
 
-void test("provides completions for provider subcommands", () => {
+void test("provides top-level and nested command completions", () => {
   const captured = createCaptured();
   extension(createPi(captured));
 
   assert.ok(captured.commandCompletions);
 
-  const topLevel = captured.commandCompletions?.("g") ?? [];
-  assert.ok(topLevel.some((item) => item.value === "global"));
+  const topLevel = captured.commandCompletions?.("se") ?? [];
+  assert.ok(topLevel.some((item) => item.value === "settings"));
+  assert.ok(topLevel.some((item) => item.label.includes("settings")));
 
-  const scoped = captured.commandCompletions?.("global o") ?? [];
-  assert.ok(scoped.some((item) => item.value === "off"));
+  const nested = captured.commandCompletions?.("providers global o") ?? [];
+  assert.ok(nested.some((item) => item.value === "providers global off"));
 });
 
 void test("injects ask_user policy for github-copilot", () => {
@@ -312,6 +313,39 @@ void test("wait timeout returns fallback when no queued input arrives", async ()
   assert.equal(waitingResult.details.source, "fallback");
 });
 
+void test("queued input after timeout is not swallowed by stale waiting state", async () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  assert.ok(captured.commandHandler);
+  assert.ok(captured.toolExecute);
+
+  await captured.commandHandler?.("wait-timeout 1", createCommandCtx());
+
+  const waitingResult = (await captured.toolExecute?.(
+    "call-1",
+    { prompt: "Need your next instruction" },
+    undefined,
+    undefined,
+    createToolCtx({ hasUI: true })
+  )) as { content: { type: string; text: string }[]; details: { source: string } };
+
+  assert.equal(waitingResult.details.source, "fallback");
+
+  await captured.commandHandler?.("add continue after timeout", createCommandCtx());
+
+  const queuedResult = (await captured.toolExecute?.(
+    "call-2",
+    {},
+    undefined,
+    undefined,
+    createToolCtx()
+  )) as { content: { type: string; text: string }[]; details: { source: string } };
+
+  assert.equal(queuedResult.content[0]?.text, "continue after timeout");
+  assert.equal(queuedResult.details.source, "queue");
+});
+
 void test("session compact persists current queue state", async () => {
   const captured = createCaptured();
   extension(createPi(captured));
@@ -447,7 +481,7 @@ void test("tool-call warning fires at configurable threshold", async () => {
   );
 });
 
-void test("session tool-call counter ignores non-ask_user tools", async () => {
+void test("session tool-call counter includes non-ask_user tools", async () => {
   const captured = createCaptured();
   extension(createPi(captured));
 
@@ -460,7 +494,7 @@ void test("session tool-call counter ignores non-ask_user tools", async () => {
   toolCallHook?.({ toolName: "bash" }, createToolCtx());
   await captured.commandHandler?.("session status", createCommandCtx(notifications, true));
 
-  assert.ok(notifications.some((line) => line.includes("Tool calls: 0")));
+  assert.ok(notifications.some((line) => line.includes("Tool calls: 1")));
 });
 
 void test("does not inject ask_user policy for non-copilot provider", () => {
@@ -593,27 +627,100 @@ void test("non-copilot providers bypass queue and autopilot", async () => {
   assert.equal(result.details.source, "fallback");
 });
 
+void test("status line uses theme styling when UI theme is available", async () => {
+  const previousCwd = process.cwd();
+  const cwd = createTempDir();
+
+  try {
+    process.chdir(cwd);
+
+    const captured = createCaptured();
+    extension(createPi(captured));
+
+    const statuses: { key: string; text: string | undefined }[] = [];
+
+    assert.ok(captured.commandHandler);
+
+    await captured.commandHandler?.(
+      "add queued reply",
+      createCommandCtx(undefined, true, "github-copilot", statuses)
+    );
+
+    const lastStatus = statuses[statuses.length - 1];
+    assert.equal(lastStatus?.key, EXTENSION_COMMAND);
+    assert.match(lastStatus?.text ?? "", /<accent>\*\*Copilot Queue\*\*<\/accent>/);
+    assert.match(lastStatus?.text ?? "", /<dim> • <\/dim>/);
+  } finally {
+    process.chdir(previousCwd);
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 void test("status line is cleared when model switches away from github-copilot", async () => {
-  const captured = createCaptured();
-  extension(createPi(captured));
+  const previousCwd = process.cwd();
+  const cwd = createTempDir();
 
-  const statuses: { key: string; text: string | undefined }[] = [];
-  const modelSelectHook = captured.eventHandlers.get("model_select");
+  try {
+    process.chdir(cwd);
 
-  assert.ok(captured.commandHandler);
-  assert.ok(modelSelectHook);
+    const captured = createCaptured();
+    extension(createPi(captured));
 
-  await captured.commandHandler?.(
-    "add queued reply",
-    createCommandCtx(undefined, true, "github-copilot", statuses)
-  );
-  assert.match(statuses[statuses.length - 1]?.text ?? "", /Copilot Queue/);
+    const statuses: { key: string; text: string | undefined }[] = [];
+    const modelSelectHook = captured.eventHandlers.get("model_select");
 
-  modelSelectHook?.({}, createToolCtx({ provider: "anthropic", hasUI: true, statuses }));
+    assert.ok(captured.commandHandler);
+    assert.ok(modelSelectHook);
 
-  const lastStatus = statuses[statuses.length - 1];
-  assert.equal(lastStatus?.key, EXTENSION_COMMAND);
-  assert.equal(lastStatus?.text, undefined);
+    await captured.commandHandler?.(
+      "add queued reply",
+      createCommandCtx(undefined, true, "github-copilot", statuses)
+    );
+    assert.match(statuses[statuses.length - 1]?.text ?? "", /Copilot Queue/);
+
+    modelSelectHook?.({}, createToolCtx({ provider: "anthropic", hasUI: true, statuses }));
+
+    const lastStatus = statuses[statuses.length - 1];
+    assert.equal(lastStatus?.key, EXTENSION_COMMAND);
+    assert.equal(lastStatus?.text, undefined);
+  } finally {
+    process.chdir(previousCwd);
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+void test("status line stays hidden when showStatusLine is false", async () => {
+  const previousCwd = process.cwd();
+  const cwd = createTempDir();
+
+  try {
+    writeJson(join(cwd, ".pi", "settings.json"), {
+      copilotQueue: {
+        providers: ["github-copilot"],
+        showStatusLine: false,
+      },
+    });
+    process.chdir(cwd);
+
+    const captured = createCaptured();
+    extension(createPi(captured));
+
+    const statuses: { key: string; text: string | undefined }[] = [];
+
+    assert.ok(captured.commandHandler);
+
+    await captured.commandHandler?.(
+      "add queued reply",
+      createCommandCtx(undefined, true, "github-copilot", statuses)
+    );
+
+    const lastStatus = statuses[statuses.length - 1];
+    assert.equal(lastStatus?.key, EXTENSION_COMMAND);
+    assert.equal(lastStatus?.text, undefined);
+  } finally {
+    process.chdir(previousCwd);
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 void test("uses fallback when queue is empty and no UI", async () => {
@@ -632,6 +739,118 @@ void test("uses fallback when queue is empty and no UI", async () => {
 
   assert.equal(result.content[0]?.text, "continue");
   assert.equal(result.details.source, "fallback");
+});
+
+void test("settings command reports a summary without UI", async () => {
+  const previousCwd = process.cwd();
+  const cwd = createTempDir();
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (message?: unknown) => {
+    if (typeof message === "string") {
+      logs.push(message);
+      return;
+    }
+
+    logs.push("");
+  };
+
+  try {
+    process.chdir(cwd);
+
+    const captured = createCaptured();
+    extension(createPi(captured));
+
+    assert.ok(captured.commandHandler);
+
+    await captured.commandHandler?.("settings", createCommandCtx(undefined, false));
+
+    assert.ok(logs.some((line) => line.includes("Copilot Queue settings:")));
+    assert.ok(logs.some((line) => line.includes("Status line: on")));
+    assert.ok(logs.some((line) => line.includes("Warning thresholds: 120 minutes, 50 tool calls")));
+  } finally {
+    console.log = originalLog;
+    process.chdir(previousCwd);
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+void test("settings UI can update project providers", async () => {
+  const previousCwd = process.cwd();
+  const cwd = createTempDir();
+
+  try {
+    process.chdir(cwd);
+
+    const captured = createCaptured();
+    extension(createPi(captured));
+
+    assert.ok(captured.commandHandler);
+
+    await captured.commandHandler?.(
+      "settings",
+      createCommandCtx(undefined, true, "github-copilot", undefined, {
+        select: ["Managed providers: github-copilot", "Set project providers", "Close"],
+        input: ["openai anthropic"],
+      })
+    );
+
+    const settingsPath = join(cwd, ".pi", "settings.json");
+    const written = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      copilotQueue?: { providers?: string[] };
+    };
+    assert.deepEqual(written.copilotQueue?.providers, ["openai", "anthropic"]);
+  } finally {
+    process.chdir(previousCwd);
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+void test("settings UI can update warning thresholds", async () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  const notifications: string[] = [];
+
+  assert.ok(captured.commandHandler);
+
+  await captured.commandHandler?.(
+    "settings",
+    createCommandCtx(notifications, true, "github-copilot", undefined, {
+      select: ["Warning thresholds: 120m / 50 tools", "Close"],
+      input: ["180", "75"],
+    })
+  );
+
+  const lastState = captured.entries[captured.entries.length - 1]?.data as {
+    warningMinutes: number;
+    warningToolCalls: number;
+  };
+  assert.equal(lastState.warningMinutes, 180);
+  assert.equal(lastState.warningToolCalls, 75);
+});
+
+void test("settings UI can update custom wait timeout after invalid input", async () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  const notifications: string[] = [];
+
+  assert.ok(captured.commandHandler);
+
+  await captured.commandHandler?.(
+    "settings",
+    createCommandCtx(notifications, true, "github-copilot", undefined, {
+      select: ["Empty-queue wait timeout: off", "Custom value...", "Close"],
+      input: ["abc", "45"],
+    })
+  );
+
+  const lastState = captured.entries[captured.entries.length - 1]?.data as {
+    waitTimeoutSeconds: number;
+  };
+  assert.equal(lastState.waitTimeoutSeconds, 45);
+  assert.ok(notifications.some((line) => line.includes("Enter a whole number 0 or greater.")));
 });
 
 void test("providers command updates project settings and managed provider scope", async () => {
@@ -728,18 +947,34 @@ void test("providers command updates global settings when scoped globally", asyn
   }
 });
 
+function createTheme() {
+  return {
+    fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+    bold: (text: string) => `**${text}**`,
+  };
+}
+
 function createCommandCtx(
   notifications?: string[],
   hasUI = false,
   provider = "github-copilot",
-  statuses?: { key: string; text: string | undefined }[]
+  statuses?: { key: string; text: string | undefined }[],
+  responses?: {
+    select?: string[];
+    input?: string[];
+    confirm?: boolean[];
+  }
 ) {
   return {
     hasUI,
     model: { provider },
     ui: {
+      theme: createTheme(),
       notify: (message: string) => notifications?.push(message),
       setStatus: (key: string, text?: string) => statuses?.push({ key, text }),
+      select: () => Promise.resolve(responses?.select?.shift()),
+      input: () => Promise.resolve(responses?.input?.shift()),
+      confirm: () => Promise.resolve(responses?.confirm?.shift() ?? false),
     },
   };
 }
@@ -754,6 +989,7 @@ function createToolCtx(options?: {
     hasUI: options?.hasUI ?? false,
     model: { provider: options?.provider ?? "github-copilot" },
     ui: {
+      theme: createTheme(),
       input: () => Promise.resolve(undefined),
       notify: (message: string) => options?.notifications?.push(message),
       setStatus: (key: string, text?: string) => options?.statuses?.push({ key, text }),
@@ -767,6 +1003,7 @@ function createInputCtx(options: { idle: boolean; provider?: string; notificatio
     model: { provider: options.provider ?? "github-copilot" },
     isIdle: () => options.idle,
     ui: {
+      theme: createTheme(),
       notify: (message: string) => options.notifications?.push(message),
       setStatus: () => undefined,
     },

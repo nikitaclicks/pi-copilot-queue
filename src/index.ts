@@ -1,11 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { buildHelpText, parseCommand } from "./commands.js";
+import { buildCommandArgumentCompletions, buildHelpText, parseCommand } from "./commands.js";
 import {
-  resolveConfiguredProviders,
+  resolveCopilotQueueSettings,
   writeGlobalConfiguredProviders,
   writeProjectConfiguredProviders,
+  writeShowStatusLine,
 } from "./config.js";
 import {
   COPILOT_ASK_USER_POLICY,
@@ -23,10 +24,11 @@ import { notifyTerminal } from "./notify.js";
 import type { QueueState } from "./types.js";
 
 const STOP_RESPONSE = "stop";
-let configuredProviders = resolveConfiguredProviders(process.cwd());
+let configuredProviders: string[] = [];
+let showStatusLine = true;
 
 export default function copilotQueueExtension(pi: ExtensionAPI) {
-  refreshConfiguredProviders();
+  refreshConfiguration();
 
   let state: QueueState = initialState();
   let pendingAskUserResolve: ((text: string) => void) | undefined;
@@ -51,7 +53,10 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     ctx: {
       hasUI: boolean;
       model: ExtensionContext["model"];
-      ui: { setStatus: (key: string, text?: string) => void };
+      ui: {
+        setStatus: (key: string, text?: string) => void;
+        theme?: StatusTheme;
+      };
     }
   ): boolean {
     if (!pendingAskUserResolve) return false;
@@ -66,7 +71,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
   function syncState(
     ctx: Pick<ExtensionContext, "sessionManager" | "hasUI" | "ui" | "model">
   ): void {
-    refreshConfiguredProviders();
+    refreshConfiguration();
     state = restoreFromContext(ctx);
     currentRunStarted = false;
     currentRunAskUserCallCount = 0;
@@ -115,11 +120,10 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     if (!isManagedProvider(ctx)) {
       return;
     }
-    if (event.toolName !== TOOL_NAME) {
-      return;
-    }
 
-    currentRunAskUserCallCount += 1;
+    if (event.toolName === TOOL_NAME) {
+      currentRunAskUserCallCount += 1;
+    }
 
     let nextState: QueueState = {
       ...state,
@@ -201,7 +205,8 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
 
   pi.registerCommand(EXTENSION_COMMAND, {
     description: "Queue responses for ask_user tool calls",
-    getArgumentCompletions: (prefix: string) => buildProviderArgumentCompletions(prefix),
+    getArgumentCompletions: (prefix: string) =>
+      buildCommandArgumentCompletions(prefix, { configuredProviders }),
     handler: (args, ctx) => {
       const command = parseCommand(args);
 
@@ -294,7 +299,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
         }
 
         case "providers": {
-          refreshConfiguredProviders();
+          refreshConfiguration();
           const raw = command.value.trim();
           const { scope, value } = parseProviderScope(raw);
           const mode = value.toLowerCase();
@@ -309,7 +314,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
               scope === "global"
                 ? writeGlobalConfiguredProviders(process.cwd(), [])
                 : writeProjectConfiguredProviders(process.cwd(), []);
-            refreshConfiguredProviders();
+            refreshConfiguration();
             updateStatus(ctx, state, hasPendingAskUser());
             notify(ctx, `${scopeLabel} providers disabled. Saved to ${path}.`);
             return Promise.resolve();
@@ -333,7 +338,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
             scope === "global"
               ? writeGlobalConfiguredProviders(process.cwd(), providers)
               : writeProjectConfiguredProviders(process.cwd(), providers);
-          refreshConfiguredProviders();
+          refreshConfiguration();
           updateStatus(ctx, state, hasPendingAskUser());
           notify(
             ctx,
@@ -351,6 +356,91 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
           persistState(pi, state);
           notify(ctx, `Fallback response updated: ${state.fallbackResponse}`);
           return Promise.resolve();
+        }
+
+        case "settings": {
+          refreshConfiguration();
+
+          if (!ctx.hasUI) {
+            notify(ctx, buildSettingsSummaryText(state));
+            return Promise.resolve();
+          }
+
+          return openSettingsUi(ctx, {
+            getState: () => state,
+            getShowStatusLine: () => showStatusLine,
+            getConfiguredProviders: () => configuredProviders,
+            onCaptureChange: (enabled) => {
+              state = { ...state, captureInteractiveInput: enabled };
+              persistState(pi, state);
+              updateStatus(ctx, state, hasPendingAskUser());
+              notify(ctx, `Interactive input capture ${enabled ? "enabled" : "disabled"}.`);
+            },
+            onShowStatusLineChange: (enabled) => {
+              writeShowStatusLine(process.cwd(), enabled);
+              refreshConfiguration();
+              updateStatus(ctx, state, hasPendingAskUser());
+              notify(ctx, `Status line ${enabled ? "enabled" : "disabled"}.`);
+            },
+            onProvidersChange: (scope, providers) => {
+              if (scope === "global") {
+                writeGlobalConfiguredProviders(process.cwd(), providers);
+              } else {
+                writeProjectConfiguredProviders(process.cwd(), providers);
+              }
+              refreshConfiguration();
+              updateStatus(ctx, state, hasPendingAskUser());
+              notify(
+                ctx,
+                `${scope === "global" ? "Global" : "Project"} providers ${providers.length > 0 ? providers.join(", ") : "disabled"}.`
+              );
+            },
+            onWaitTimeoutChange: (seconds) => {
+              state = { ...state, waitTimeoutSeconds: seconds };
+              persistState(pi, state);
+              notify(ctx, `Wait timeout updated: ${seconds} seconds.`);
+            },
+            onFallbackChange: (fallbackResponse) => {
+              state = { ...state, fallbackResponse };
+              persistState(pi, state);
+              notify(ctx, `Fallback response updated: ${fallbackResponse}`);
+            },
+            onWarningThresholdChange: (warningMinutes, warningToolCalls) => {
+              let nextState: QueueState = {
+                ...state,
+                warningMinutes,
+                warningToolCalls,
+                warnedTime: false,
+                warnedToolCalls: false,
+              };
+              nextState = applySessionWarnings(nextState, ctx);
+              state = nextState;
+              persistState(pi, state);
+              updateStatus(ctx, state, hasPendingAskUser());
+              notify(
+                ctx,
+                `Warning thresholds updated: ${warningMinutes} minutes, ${warningToolCalls} tool calls.`
+              );
+            },
+            onAutopilotEnabledChange: (enabled) => {
+              state = { ...state, autopilotEnabled: enabled };
+              persistState(pi, state);
+              updateStatus(ctx, state, hasPendingAskUser());
+              notify(ctx, `Autopilot ${enabled ? "enabled" : "disabled"}.`);
+            },
+            onAutopilotPromptAdd: (prompt) => {
+              state = { ...state, autopilotPrompts: [...state.autopilotPrompts, prompt] };
+              persistState(pi, state);
+              updateStatus(ctx, state, hasPendingAskUser());
+              notify(ctx, `Autopilot prompt added (#${state.autopilotPrompts.length}).`);
+            },
+            onAutopilotPromptsClear: () => {
+              state = { ...state, autopilotPrompts: [], autopilotIndex: 0 };
+              persistState(pi, state);
+              updateStatus(ctx, state, hasPendingAskUser());
+              notify(ctx, "Autopilot prompts cleared.");
+            },
+          });
         }
 
         case "autopilot-on": {
@@ -482,7 +572,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: TOOL_NAME,
     label: "Ask User (Queue-Aware)",
-    description: `For configured providers: call this instead of ending with a direct assistant reply. Returns the next queued response first, then autopilot prompts in cycle mode. If queue is empty in UI mode, waits for /copilot-queue add or /copilot-queue done.`,
+    description: `For configured providers: call this instead of ending with a direct assistant reply. Returns the next queued response first, then autopilot prompts in cycle mode. If queue is empty in UI mode, waits for /copilot-queue add, /copilot-queue done, or /copilot-queue stop.`,
     parameters: Type.Object({
       prompt: Type.Optional(
         Type.String({ description: "Question to display when queue and autopilot are empty" })
@@ -558,6 +648,9 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
           updateStatus(ctx, state, true);
         },
       });
+
+      pendingAskUserResolve = undefined;
+      updateStatus(ctx, state, false);
 
       const source =
         text.source === "stop" ? "stop" : text.source === "timeout" ? "fallback" : "queue-live";
@@ -670,42 +763,347 @@ function parseProviderScope(raw: string): { scope: "project" | "global"; value: 
   return { scope: "project", value: raw };
 }
 
-function buildProviderArgumentCompletions(
-  prefix: string
-): { value: string; label: string }[] | null {
-  const trimmed = prefix.trim();
-  const suggestions = getProviderSuggestions(trimmed);
+function buildSettingsSummaryText(state: QueueState): string {
+  const timeout =
+    state.waitTimeoutSeconds === 0 ? "off" : `${state.waitTimeoutSeconds} seconds before fallback`;
 
-  if (suggestions.length === 0) {
-    return null;
-  }
-
-  return suggestions.map((value) => ({ value, label: value }));
+  return [
+    `Copilot Queue settings:`,
+    `- Managed providers: ${getConfiguredProviderLabel()}`,
+    `- Busy input capture: ${state.captureInteractiveInput ? "on" : "off"}`,
+    `- Status line: ${showStatusLine ? "on" : "off"}`,
+    `- Empty-queue wait timeout: ${timeout}`,
+    `- Fallback response: ${state.fallbackResponse}`,
+    `- Warning thresholds: ${state.warningMinutes} minutes, ${state.warningToolCalls} tool calls`,
+    `- Autopilot: ${state.autopilotEnabled ? "on" : "off"}`,
+    `- Autopilot prompts: ${state.autopilotPrompts.length}`,
+  ].join("\n");
 }
 
-function getProviderSuggestions(prefix: string): string[] {
-  const items = ["global", "project", "show", "list", "status", "set", "off", "clear"];
-  if (!prefix) {
-    return items;
+async function openSettingsUi(
+  ctx: ExtensionContext,
+  options: {
+    getState: () => QueueState;
+    getShowStatusLine: () => boolean;
+    getConfiguredProviders: () => string[];
+    onCaptureChange: (enabled: boolean) => void;
+    onShowStatusLineChange: (enabled: boolean) => void;
+    onProvidersChange: (scope: "project" | "global", providers: string[]) => void;
+    onWaitTimeoutChange: (seconds: number) => void;
+    onFallbackChange: (fallbackResponse: string) => void;
+    onWarningThresholdChange: (warningMinutes: number, warningToolCalls: number) => void;
+    onAutopilotEnabledChange: (enabled: boolean) => void;
+    onAutopilotPromptAdd: (prompt: string) => void;
+    onAutopilotPromptsClear: () => void;
+  }
+): Promise<void> {
+  while (true) {
+    const state = options.getState();
+    const selection = await ctx.ui.select("Copilot Queue Settings", [
+      `Managed providers: ${options.getConfiguredProviders().join(", ") || "(disabled)"}`,
+      `Busy input capture: ${state.captureInteractiveInput ? "on" : "off"}`,
+      `Status line: ${options.getShowStatusLine() ? "on" : "off"}`,
+      `Empty-queue wait timeout: ${formatWaitTimeoutLabel(state.waitTimeoutSeconds)}`,
+      `Fallback response: ${state.fallbackResponse}`,
+      `Warning thresholds: ${state.warningMinutes}m / ${state.warningToolCalls} tools`,
+      `Autopilot: ${state.autopilotEnabled ? "on" : "off"}`,
+      `Autopilot prompts: ${state.autopilotPrompts.length}`,
+      "Close",
+    ]);
+
+    if (!selection || selection === "Close") {
+      return;
+    }
+
+    if (selection.startsWith("Managed providers:")) {
+      await editProvidersSetting(ctx, options);
+      continue;
+    }
+
+    if (selection.startsWith("Busy input capture:")) {
+      const enabled = await selectOnOff(ctx, "Busy input capture", state.captureInteractiveInput);
+      if (enabled !== undefined) {
+        options.onCaptureChange(enabled);
+      }
+      continue;
+    }
+
+    if (selection.startsWith("Status line:")) {
+      const enabled = await selectOnOff(ctx, "Status line", options.getShowStatusLine());
+      if (enabled !== undefined) {
+        options.onShowStatusLineChange(enabled);
+      }
+      continue;
+    }
+
+    if (selection.startsWith("Empty-queue wait timeout:")) {
+      const seconds = await editWaitTimeoutSetting(ctx, state.waitTimeoutSeconds);
+      if (seconds !== undefined) {
+        options.onWaitTimeoutChange(seconds);
+      }
+      continue;
+    }
+
+    if (selection.startsWith("Fallback response:")) {
+      const fallbackResponse = await ctx.ui.input(
+        "Fallback response",
+        `Current: ${state.fallbackResponse}`
+      );
+      const trimmed = fallbackResponse?.trim();
+      if (trimmed) {
+        options.onFallbackChange(trimmed);
+      }
+      continue;
+    }
+
+    if (selection.startsWith("Warning thresholds:")) {
+      const thresholds = await editWarningThresholdsSetting(
+        ctx,
+        state.warningMinutes,
+        state.warningToolCalls
+      );
+      if (thresholds) {
+        options.onWarningThresholdChange(thresholds.minutes, thresholds.toolCalls);
+      }
+      continue;
+    }
+
+    if (selection.startsWith("Autopilot:")) {
+      const enabled = await selectOnOff(ctx, "Autopilot", state.autopilotEnabled);
+      if (enabled !== undefined) {
+        options.onAutopilotEnabledChange(enabled);
+      }
+      continue;
+    }
+
+    if (selection.startsWith("Autopilot prompts:")) {
+      await editAutopilotPromptsSetting(ctx, state, options);
+    }
+  }
+}
+
+async function editProvidersSetting(
+  ctx: ExtensionContext,
+  options: {
+    getConfiguredProviders: () => string[];
+    onProvidersChange: (scope: "project" | "global", providers: string[]) => void;
+  }
+): Promise<void> {
+  const selection = await ctx.ui.select("Managed providers", [
+    "Set project providers",
+    "Disable project providers",
+    "Set global providers",
+    "Disable global providers",
+    "Back",
+  ]);
+
+  if (!selection || selection === "Back") {
+    return;
   }
 
-  const tokens = prefix.split(/\s+/);
-  if (tokens.length === 1) {
-    return items.filter((item) => item.startsWith(tokens[0] ?? ""));
+  if (selection === "Disable project providers") {
+    options.onProvidersChange("project", []);
+    return;
   }
 
-  const scope = tokens[0]?.toLowerCase();
-  if (scope === "global" || scope === "project") {
-    return ["set", "off", "clear", "show", "list", "status"].filter((item) =>
-      item.startsWith(tokens[tokens.length - 1] ?? "")
+  if (selection === "Disable global providers") {
+    options.onProvidersChange("global", []);
+    return;
+  }
+
+  const scope = selection === "Set global providers" ? "global" : "project";
+  const response = await ctx.ui.input(
+    scope === "global" ? "Global managed providers" : "Project managed providers",
+    `Space- or comma-separated provider names. Active: ${options.getConfiguredProviders().join(", ") || "(disabled)"}`
+  );
+
+  if (response === undefined) {
+    return;
+  }
+
+  const providers = response
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (providers.length === 0) {
+    notify(
+      ctx,
+      "No providers entered. Use the disable option to turn provider routing off.",
+      "warning"
     );
+    return;
   }
 
-  return items.filter((item) => item.startsWith(tokens[tokens.length - 1] ?? ""));
+  options.onProvidersChange(scope, providers);
 }
 
-function refreshConfiguredProviders(cwd: string = process.cwd()): void {
-  configuredProviders = resolveConfiguredProviders(cwd);
+async function selectOnOff(
+  ctx: ExtensionContext,
+  title: string,
+  currentValue: boolean
+): Promise<boolean | undefined> {
+  const selection = await ctx.ui.select(title, [
+    `${currentValue ? "✓ " : ""}On`,
+    `${!currentValue ? "✓ " : ""}Off`,
+    "Back",
+  ]);
+
+  if (!selection || selection === "Back") {
+    return undefined;
+  }
+
+  return selection.endsWith("On");
+}
+
+async function editWaitTimeoutSetting(
+  ctx: ExtensionContext,
+  currentSeconds: number
+): Promise<number | undefined> {
+  const selection = await ctx.ui.select("Empty-queue wait timeout", [
+    `Current: ${formatWaitTimeoutLabel(currentSeconds)}`,
+    "0 seconds (wait indefinitely)",
+    "30 seconds",
+    "60 seconds",
+    "300 seconds",
+    "Custom value...",
+    "Back",
+  ]);
+
+  if (!selection || selection === "Back" || selection.startsWith("Current:")) {
+    return undefined;
+  }
+
+  if (selection === "Custom value...") {
+    return promptForNonNegativeInt(ctx, "Custom wait timeout", "Seconds (0 or greater)");
+  }
+
+  return parseNonNegativeInt(selection.split(" ")[0] ?? "");
+}
+
+async function editWarningThresholdsSetting(
+  ctx: ExtensionContext,
+  currentMinutes: number,
+  currentToolCalls: number
+): Promise<{ minutes: number; toolCalls: number } | undefined> {
+  const minutes = await promptForPositiveInt(
+    ctx,
+    "Warning threshold: minutes",
+    `Current: ${currentMinutes}`
+  );
+  if (minutes === undefined) {
+    return undefined;
+  }
+
+  const toolCalls = await promptForPositiveInt(
+    ctx,
+    "Warning threshold: tool calls",
+    `Current: ${currentToolCalls}`
+  );
+  if (toolCalls === undefined) {
+    return undefined;
+  }
+
+  return { minutes, toolCalls };
+}
+
+async function promptForPositiveInt(
+  ctx: ExtensionContext,
+  title: string,
+  placeholder: string
+): Promise<number | undefined> {
+  while (true) {
+    const response = await ctx.ui.input(title, placeholder);
+    if (response === undefined) {
+      return undefined;
+    }
+
+    const value = parsePositiveInt(response);
+    if (value !== undefined) {
+      return value;
+    }
+
+    notify(ctx, "Enter a whole number greater than 0.", "warning");
+  }
+}
+
+async function promptForNonNegativeInt(
+  ctx: ExtensionContext,
+  title: string,
+  placeholder: string
+): Promise<number | undefined> {
+  while (true) {
+    const response = await ctx.ui.input(title, placeholder);
+    if (response === undefined) {
+      return undefined;
+    }
+
+    const value = parseNonNegativeInt(response);
+    if (value !== undefined) {
+      return value;
+    }
+
+    notify(ctx, "Enter a whole number 0 or greater.", "warning");
+  }
+}
+
+async function editAutopilotPromptsSetting(
+  ctx: ExtensionContext,
+  state: QueueState,
+  options: {
+    onAutopilotPromptAdd: (prompt: string) => void;
+    onAutopilotPromptsClear: () => void;
+  }
+): Promise<void> {
+  const selection = await ctx.ui.select("Autopilot prompts", [
+    `Current prompts: ${state.autopilotPrompts.length}`,
+    "Add prompt",
+    "Show prompts",
+    "Clear prompts",
+    "Back",
+  ]);
+
+  if (!selection || selection === "Back" || selection.startsWith("Current prompts:")) {
+    return;
+  }
+
+  if (selection === "Add prompt") {
+    const response = await ctx.ui.input("Add autopilot prompt", "Prompt text");
+    const trimmed = response?.trim();
+    if (trimmed) {
+      options.onAutopilotPromptAdd(trimmed);
+    }
+    return;
+  }
+
+  if (selection === "Show prompts") {
+    const lines =
+      state.autopilotPrompts.length === 0
+        ? ["Autopilot prompt list is empty."]
+        : state.autopilotPrompts.map((item, index) => `${index + 1}. ${item}`);
+    ctx.ui.notify(lines.join("\n"), "info");
+    return;
+  }
+
+  if (selection === "Clear prompts") {
+    const confirmed = await ctx.ui.confirm(
+      "Clear autopilot prompts?",
+      `Remove ${state.autopilotPrompts.length} prompt(s)?`
+    );
+    if (confirmed) {
+      options.onAutopilotPromptsClear();
+    }
+  }
+}
+
+function formatWaitTimeoutLabel(seconds: number): string {
+  return seconds === 0 ? "off" : `${seconds}s`;
+}
+
+function refreshConfiguration(cwd: string = process.cwd()): void {
+  const settings = resolveCopilotQueueSettings(cwd);
+  configuredProviders = settings.providers;
+  showStatusLine = settings.showStatusLine;
 }
 
 function formatComplianceRate(state: QueueState): string {
@@ -974,32 +1372,72 @@ function persistState(pi: ExtensionAPI, state: QueueState): void {
   pi.appendEntry(STATE_ENTRY_TYPE, state);
 }
 
+interface StatusTheme {
+  fg: (color: "accent" | "text" | "dim" | "warning", text: string) => string;
+  bold: (text: string) => string;
+}
+
 function updateStatus(
   ctx: {
     hasUI: boolean;
     model: ExtensionContext["model"];
-    ui: { setStatus: (key: string, text?: string) => void };
+    ui: {
+      setStatus: (key: string, text?: string) => void;
+      theme?: StatusTheme;
+    };
   },
   state: QueueState,
   waitingForQueue: boolean
 ): void {
   if (!ctx.hasUI) return;
-  if (!ctx.model?.provider || !configuredProviders.includes(ctx.model.provider)) {
+  if (
+    !showStatusLine ||
+    !ctx.model?.provider ||
+    !configuredProviders.includes(ctx.model.provider)
+  ) {
     ctx.ui.setStatus(EXTENSION_COMMAND);
     return;
   }
 
-  const autopilot = state.autopilotEnabled
-    ? `autopilot:${state.autopilotPrompts.length}`
-    : "autopilot:off";
-  const capture = state.captureInteractiveInput ? "capture:on" : "capture:off";
-  const waiting = waitingForQueue ? " | waiting:input" : "";
-  const misses = state.missedAskUserRunCount > 0 ? ` · miss:${state.missedAskUserRunCount}` : "";
-  const session = `${formatElapsed(state)} · ${state.toolCallCount} tools${misses}`;
-  ctx.ui.setStatus(
-    EXTENSION_COMMAND,
-    `${EXTENSION_NAME}: ${state.queue.length} queued${waiting} | ${autopilot} | ${capture} | ${session}`
-  );
+  ctx.ui.setStatus(EXTENSION_COMMAND, formatStatusText(state, waitingForQueue, ctx.ui.theme));
+}
+
+function formatStatusText(
+  state: QueueState,
+  waitingForQueue: boolean,
+  theme?: StatusTheme
+): string {
+  if (!theme) {
+    const autopilot = state.autopilotEnabled
+      ? `autopilot:${state.autopilotPrompts.length}`
+      : "autopilot:off";
+    const capture = state.captureInteractiveInput ? "capture:on" : "capture:off";
+    const waiting = waitingForQueue ? " | waiting:input" : "";
+    const misses = state.missedAskUserRunCount > 0 ? ` · miss:${state.missedAskUserRunCount}` : "";
+    const session = `${formatElapsed(state)} · ${state.toolCallCount} tools${misses}`;
+    return `${EXTENSION_NAME}: ${state.queue.length} queued${waiting} | ${autopilot} | ${capture} | ${session}`;
+  }
+
+  const separator = theme.fg("dim", " • ");
+  const parts = [
+    theme.fg("accent", theme.bold(EXTENSION_NAME)),
+    `${theme.fg(state.queue.length > 0 ? "accent" : "text", String(state.queue.length))}${theme.fg("dim", " queued")}`,
+    state.autopilotEnabled
+      ? `${theme.fg("accent", String(state.autopilotPrompts.length))}${theme.fg("dim", " autopilot")}`
+      : theme.fg("dim", "autopilot off"),
+    theme.fg("dim", `capture ${state.captureInteractiveInput ? "on" : "off"}`),
+    theme.fg("dim", `${formatElapsed(state)} • ${state.toolCallCount} tools`),
+  ];
+
+  if (waitingForQueue) {
+    parts.splice(2, 0, theme.fg("warning", "waiting for input"));
+  }
+
+  if (state.missedAskUserRunCount > 0) {
+    parts.push(theme.fg("warning", `miss ${state.missedAskUserRunCount}`));
+  }
+
+  return parts.join(separator);
 }
 
 function restoreFromContext(ctx: Pick<ExtensionContext, "sessionManager">): QueueState {

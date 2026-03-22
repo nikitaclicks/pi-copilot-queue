@@ -18,6 +18,7 @@ This extension is inspired by [TaskSync](https://github.com/4regab/TaskSync)-sty
 - Emits session hygiene warnings at configurable thresholds (default: 120 minutes, 50 tool calls)
 - Persists state in session entries
 - Shows queue/autopilot/session state in Pi status line when the current provider is configured for Copilot Queue
+- Status line output follows the active Pi theme, and can be disabled with `copilotQueue.showStatusLine`
 
 When `ask_user` is called:
 
@@ -106,7 +107,8 @@ You can override that in Pi settings:
 ```json
 {
   "copilotQueue": {
-    "providers": ["github-copilot", "openai"]
+    "providers": ["github-copilot", "openai"],
+    "showStatusLine": true
   }
 }
 ```
@@ -125,7 +127,7 @@ Settings lookup order:
 
 - `.pi/settings.json` overrides
 - `~/.pi/agent/settings.json`
-- default: `["github-copilot"]`
+- defaults: `providers = ["github-copilot"]`, `showStatusLine = true`
 
 Use an empty array to disable provider interception entirely:
 
@@ -133,6 +135,16 @@ Use an empty array to disable provider interception entirely:
 {
   "copilotQueue": {
     "providers": []
+  }
+}
+```
+
+Hide the extension status line while keeping provider management enabled:
+
+```json
+{
+  "copilotQueue": {
+    "showStatusLine": false
   }
 }
 ```
@@ -145,13 +157,14 @@ You can also manage the project or global override from inside Pi:
 /copilot-queue providers global openai anthropic
 /copilot-queue providers off
 /copilot-queue providers global off
+/copilot-queue settings
 ```
 
 - `providers` with no arguments shows the current active list.
 - Passing one or more provider names writes `.pi/settings.json` for the current project.
 - Prefixing with `global` writes `~/.pi/agent/settings.json` instead.
 - `off` writes an empty provider list for the selected scope.
-- Tab completion suggests the provider subcommands (`global`, `project`, `off`, `show`, `list`, `status`, `set`).
+- Tab completion covers the full command surface, including top-level commands, provider routing, session subcommands, timeout presets, and common provider names.
 
 ## Usage
 
@@ -174,6 +187,23 @@ You can also manage the project or global override from inside Pi:
 ```
 
 Both commands request an explicit stop. If `ask_user` is currently waiting, it is released with `stop`. Otherwise the next `ask_user` call will immediately receive `stop`.
+
+### Quick settings UI
+
+```text
+/copilot-queue settings
+```
+
+The settings UI lets you adjust all current Copilot Queue settings from one place, including:
+
+- managed providers
+- busy input capture
+- status line visibility
+- empty-queue wait timeout
+- fallback response
+- warning thresholds
+- autopilot on/off
+- autopilot prompt add/clear
 
 ### Interactive capture while busy (configured providers only)
 
@@ -203,7 +233,7 @@ Both commands request an explicit stop. If `ask_user` is currently waiting, it i
 /copilot-queue session threshold 120 50
 ```
 
-- Status line always includes elapsed time + tool-call count, and shows missed ask_user runs when they happen.
+- When enabled, the status line includes elapsed time + tool-call count, and shows missed ask_user runs when they happen.
 - `/copilot-queue session status` also reports completed managed-provider runs, runs that used `ask_user`, direct replies that skipped `ask_user`, compliance rate, and the last missed direct reply preview.
 - Warnings are advisory only (no forced stop).
 - Default thresholds are `120` minutes and `50` tool calls.
