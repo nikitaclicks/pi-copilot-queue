@@ -269,6 +269,14 @@ pnpm install
 pnpm run check
 ```
 
+Release commands:
+
+```bash
+pnpm run release:patch
+pnpm run release:minor
+pnpm run release:major
+```
+
 Quick run:
 
 ```bash
