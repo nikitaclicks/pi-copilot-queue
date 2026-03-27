@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/ayagmar/pi-copilot-queue/compare/v0.7.2...v0.7.3) (2026-03-27)
+
+### Bug Fixes
+
+* **queue:** handle stop turns and anthropic thinking ([d7c5b68](https://github.com/ayagmar/pi-copilot-queue/commit/d7c5b68ebf265ba3242c2c00453624327810318a))
+* **queue:** keep stop mode until rearmed ([7dd1b63](https://github.com/ayagmar/pi-copilot-queue/commit/7dd1b63e890a81a56b59f7573fd236d699eb050e))
+
 ## [0.7.2](https://github.com/ayagmar/pi-copilot-queue/compare/v0.7.1...v0.7.2) (2026-03-26)
 
 ### Bug Fixes
