@@ -13,6 +13,7 @@ interface Captured {
   commandCompletions?: ((prefix: string) => { value: string; label: string }[] | null) | undefined;
   toolName?: string;
   toolExecute?: (...args: unknown[]) => Promise<unknown>;
+  toolRenderCall?: (...args: unknown[]) => unknown;
   entries: { type: "custom"; customType: string; data: unknown }[];
   eventHandlers: Map<string, (event: unknown, ctx: unknown) => unknown>;
 }
@@ -36,9 +37,16 @@ function createPi(captured: Captured): ExtensionAPI {
       captured.commandHandler = def.handler;
       captured.commandCompletions = def.getArgumentCompletions;
     },
-    registerTool: (def: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
+    registerTool: (def: {
+      name: string;
+      execute: (...args: unknown[]) => Promise<unknown>;
+      renderCall?: (...args: unknown[]) => unknown;
+    }) => {
       captured.toolName = def.name;
       captured.toolExecute = def.execute;
+      if (def.renderCall) {
+        captured.toolRenderCall = def.renderCall;
+      }
     },
   } as unknown as ExtensionAPI;
 }
@@ -62,6 +70,46 @@ void test("registers expected command and tool", () => {
 
   assert.equal(captured.commandName, EXTENSION_COMMAND);
   assert.equal(captured.toolName, TOOL_NAME);
+});
+
+void test("renderCall keeps tool name and renders markdown prompt", () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  assert.ok(captured.toolRenderCall);
+  const component = captured.toolRenderCall?.(
+    { prompt: "Please review **bold** notes" },
+    createTheme()
+  ) as { children?: { constructor: { name: string }; text?: string }[] };
+
+  assert.ok(component);
+  assert.ok(Array.isArray(component.children));
+  assert.equal(component.children.length, 3);
+
+  const [title, spacer, markdown] = component.children;
+  assert.equal(title?.constructor?.name, "Text");
+  assert.match(title?.text ?? "", /ask_user/);
+
+  assert.equal(spacer?.constructor?.name, "Spacer");
+
+  assert.equal(markdown?.constructor?.name, "Markdown");
+  assert.equal(markdown?.text, "Please review **bold** notes");
+});
+
+void test("renderCall keeps plain fallback text when prompt is empty", () => {
+  const captured = createCaptured();
+  extension(createPi(captured));
+
+  assert.ok(captured.toolRenderCall);
+  const component = captured.toolRenderCall?.({}, createTheme()) as {
+    render: (width: number) => string[];
+  };
+
+  assert.ok(component);
+
+  const text = stripAnsiText(component.render(100).join("\n"));
+  assert.match(text, /ask_user/);
+  assert.match(text, /Waiting for user input/);
 });
 
 void test("provides top-level and nested command completions", () => {
@@ -1184,6 +1232,10 @@ void test("providers command rejects the removed project prefix", async () => {
     notifications.some((line) => line.includes("Project-scoped providers are no longer supported"))
   );
 });
+
+function stripAnsiText(text: string): string {
+  return text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+}
 
 function createTheme() {
   return {

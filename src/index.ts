@@ -1,5 +1,9 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import {
+  getMarkdownTheme,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@mariozechner/pi-coding-agent";
+import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { buildCommandArgumentCompletions, buildHelpText, parseCommand } from "./commands.js";
 import {
@@ -663,13 +667,19 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     }),
     renderCall(args, theme) {
       const prompt = args.prompt;
-      let text = theme.fg("toolTitle", theme.bold(`${TOOL_NAME} `));
-      if (prompt) {
-        text += theme.fg("dim", prompt);
-      } else {
-        text += theme.fg("dim", "Waiting for user input...");
+      if (!prompt?.trim()) {
+        const text =
+          theme.fg("toolTitle", theme.bold(`${TOOL_NAME} `)) +
+          theme.fg("dim", "Waiting for user input...");
+        return new Text(text, 0, 0);
       }
-      return new Text(text, 0, 0);
+
+      const mdTheme = getMarkdownTheme();
+      const container = new Container();
+      container.addChild(new Text(theme.fg("toolTitle", theme.bold(`${TOOL_NAME} `)), 0, 0));
+      container.addChild(new Spacer(1));
+      container.addChild(new Markdown(prompt, 0, 0, mdTheme));
+      return container;
     },
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (!isManagedProvider(ctx)) {
