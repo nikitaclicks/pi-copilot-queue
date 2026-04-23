@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.4](https://github.com/ayagmar/pi-copilot-queue/compare/v0.7.3...v0.7.4) (2026-04-23)
+
+### Features
+
+* enhance renderCall to support markdown prompts and fallback text ([2fb76d8](https://github.com/ayagmar/pi-copilot-queue/commit/2fb76d89414593e9784221486d620a386a57bf4a))
+
+### Bug Fixes
+
+* conditionally assign toolRenderCall in createPi function ([15b46e5](https://github.com/ayagmar/pi-copilot-queue/commit/15b46e5ed6b7a345a5ef3126b526d42520ae894a))
+
 ## [0.7.3](https://github.com/ayagmar/pi-copilot-queue/compare/v0.7.2...v0.7.3) (2026-03-27)
 
 ### Bug Fixes
