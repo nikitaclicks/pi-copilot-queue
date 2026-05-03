@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import extension from "../src/index.js";
-import { EXTENSION_COMMAND, STATE_ENTRY_TYPE, TOOL_NAME } from "../src/constants.js";
+import { EXTENSION_COMMAND, TOOL_NAME } from "../src/constants.js";
 
 interface Captured {
   commandName?: string;
@@ -126,7 +126,7 @@ void test("provides top-level and nested command completions", () => {
   assert.ok(nested.some((item) => item.value === "providers global off"));
 });
 
-void test("injects ask_user policy into the system prompt and a hidden reminder", () => {
+void test("injects ask_user policy and reminder into the system prompt without adding a message", () => {
   const captured = createCaptured();
   extension(createPi(captured));
 
@@ -142,9 +142,53 @@ void test("injects ask_user policy into the system prompt and a hidden reminder"
   assert.match(result.systemPrompt, /explicitly replied with stop, end, terminate, or quit/i);
   assert.doesNotMatch(result.systemPrompt, /no more interaction needed/i);
   assert.match(
-    result.message?.content ?? "",
+    result.systemPrompt,
     /use ask_user instead of ending with a direct assistant reply/i
   );
+  assert.equal(result.message, undefined);
+});
+
+void test("history-append reminder mode appends a hidden message without registering a context hook", () => {
+  const previousCwd = process.cwd();
+  const previousHome = process.env.HOME;
+  const cwd = createTempDir();
+  const homeDir = createTempDir();
+
+  try {
+    writeJson(join(homeDir, ".pi", "agent", "settings.json"), {
+      copilotQueue: {
+        reminderMode: "history-append",
+      },
+    });
+    process.chdir(cwd);
+    process.env.HOME = homeDir;
+
+    const captured = createCaptured();
+    extension(createPi(captured));
+
+    const hook = captured.eventHandlers.get("before_agent_start");
+    const contextHook = captured.eventHandlers.get("context");
+    assert.ok(hook);
+    assert.equal(contextHook, undefined);
+
+    const result = hook?.(
+      { systemPrompt: "base prompt" },
+      { model: { provider: "github-copilot" } }
+    ) as { systemPrompt: string; message?: { content?: string } };
+
+    assert.match(result.systemPrompt, /call the ask_user tool/i);
+    assert.doesNotMatch(result.systemPrompt, /Copilot Queue protocol reminder:/i);
+    assert.match(result.message?.content ?? "", /Copilot Queue protocol reminder:/i);
+  } finally {
+    process.chdir(previousCwd);
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
 });
 
 void test("forces required tool choice for managed provider payloads when ask_user is present", () => {
@@ -421,7 +465,7 @@ void test("stop and done suppress ask_user policy until rearmed", async () => {
     assert.ok(captured.commandHandler);
     assert.ok(beforeAgentStartHook);
     assert.ok(beforeProviderRequestHook);
-    assert.ok(contextHook);
+    assert.equal(contextHook, undefined);
     assert.ok(agentEndHook);
 
     await captured.commandHandler?.(command, createCommandCtx());
@@ -432,28 +476,6 @@ void test("stop and done suppress ask_user policy until rearmed", async () => {
         createToolCtx({ hasUI: true, notifications })
       );
       assert.equal(beforeAgentStartResult, undefined);
-
-      const contextResult = contextHook?.(
-        {
-          messages: [
-            {
-              customType: `${STATE_ENTRY_TYPE}:policy`,
-              content: "Copilot Queue protocol reminder:",
-            },
-            {
-              role: "user",
-              content: [{ type: "text", text: "nice" }],
-            },
-          ],
-        },
-        createToolCtx({ hasUI: true, notifications })
-      ) as { messages: { customType?: string }[] };
-      assert.deepEqual(contextResult.messages, [
-        {
-          role: "user",
-          content: [{ type: "text", text: "nice" }],
-        },
-      ]);
 
       const payload = {
         tools: [
@@ -652,8 +674,15 @@ void test("tracks missed ask_user runs when copilot replies directly", async () 
     createToolCtx({ hasUI: true, notifications })
   );
 
+  const nextRun = beforeAgentStartHook?.(
+    { systemPrompt: "base prompt" },
+    createToolCtx({ hasUI: true })
+  ) as { systemPrompt: string; message?: unknown };
+
   await captured.commandHandler?.("session status", createCommandCtx(notifications, true));
 
+  assert.match(nextRun.systemPrompt, /Previous managed-provider run missed ask_user/i);
+  assert.equal(nextRun.message, undefined);
   assert.ok(notifications.some((line) => line.includes("Direct replies without ask_user: 1")));
   assert.ok(notifications.some((line) => line.includes("Last missed run non-ask_user tools: 1")));
   assert.ok(
@@ -1043,7 +1072,14 @@ void test("settings UI can update global providers", async () => {
     await captured.commandHandler?.(
       "settings",
       createCommandCtx(undefined, true, "github-copilot", undefined, {
-        select: ["Managed providers: github-copilot", "Set global providers", "Close"],
+        select: [
+          "Managed providers: github-copilot",
+          "Busy input capture: on",
+          "Status line: on",
+          "Reminder mode: system-prompt",
+          "Set global providers",
+          "Close",
+        ],
         input: ["openai anthropic"],
       })
     );
@@ -1076,7 +1112,12 @@ void test("settings UI can update warning thresholds", async () => {
   await captured.commandHandler?.(
     "settings",
     createCommandCtx(notifications, true, "github-copilot", undefined, {
-      select: ["Warning thresholds: 120m / 50 ask_user", "Close"],
+      select: [
+        "Warning thresholds: 120m / 50 ask_user",
+        "Autopilot: off",
+        "Autopilot prompts: 0",
+        "Close",
+      ],
       input: ["180", "75"],
     })
   );
@@ -1100,7 +1141,12 @@ void test("settings UI can update custom wait timeout after invalid input", asyn
   await captured.commandHandler?.(
     "settings",
     createCommandCtx(notifications, true, "github-copilot", undefined, {
-      select: ["Empty-queue wait timeout: off", "Custom value...", "Close"],
+      select: [
+        "Empty-queue wait timeout: off",
+        "Custom value...",
+        "Reminder mode: system-prompt",
+        "Close",
+      ],
       input: ["abc", "45"],
     })
   );

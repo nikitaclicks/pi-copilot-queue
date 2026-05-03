@@ -5,8 +5,10 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import {
   resolveConfiguredProviders,
+  resolveReminderMode,
   resolveShowStatusLine,
   writeGlobalConfiguredProviders,
+  writeReminderMode,
   writeShowStatusLine,
 } from "../src/config.js";
 
@@ -37,6 +39,18 @@ void test("resolveShowStatusLine defaults to true", () => {
 
   try {
     assert.equal(resolveShowStatusLine(homeDir), true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+void test("resolveReminderMode defaults to system-prompt", () => {
+  const cwd = createTempDir();
+  const homeDir = createTempDir();
+
+  try {
+    assert.equal(resolveReminderMode(homeDir), "system-prompt");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
@@ -120,6 +134,32 @@ void test("resolveShowStatusLine reads global settings and ignores project overr
   }
 });
 
+void test("resolveReminderMode reads global settings and ignores invalid values", () => {
+  const cwd = createTempDir();
+  const homeDir = createTempDir();
+
+  try {
+    writeJson(join(homeDir, ".pi", "agent", "settings.json"), {
+      copilotQueue: {
+        reminderMode: "history-append",
+      },
+    });
+
+    assert.equal(resolveReminderMode(homeDir), "history-append");
+
+    writeJson(join(homeDir, ".pi", "agent", "settings.json"), {
+      copilotQueue: {
+        reminderMode: "bogus",
+      },
+    });
+
+    assert.equal(resolveReminderMode(homeDir), "system-prompt");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
 void test("resolveConfiguredProviders allows disabling with an empty global array", () => {
   const cwd = createTempDir();
   const homeDir = createTempDir();
@@ -172,6 +212,48 @@ void test("writeShowStatusLine preserves configured providers in global settings
     assert.equal(path, join(homeDir, ".pi", "agent", "settings.json"));
     assert.deepEqual(resolveConfiguredProviders(homeDir), ["github-copilot", "openai"]);
     assert.equal(resolveShowStatusLine(homeDir), false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+void test("writeReminderMode writes global settings", () => {
+  const cwd = createTempDir();
+  const homeDir = createTempDir();
+
+  try {
+    const path = writeReminderMode("history-append", homeDir);
+
+    assert.equal(path, join(homeDir, ".pi", "agent", "settings.json"));
+    assert.equal(resolveReminderMode(homeDir), "history-append");
+
+    const raw = readFileSync(path, "utf8");
+    assert.match(raw, /"reminderMode": "history-append"/s);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+void test("writeReminderMode preserves configured providers and showStatusLine in global settings", () => {
+  const cwd = createTempDir();
+  const homeDir = createTempDir();
+
+  try {
+    writeJson(join(homeDir, ".pi", "agent", "settings.json"), {
+      copilotQueue: {
+        providers: ["github-copilot", "openai"],
+        showStatusLine: false,
+      },
+    });
+
+    const path = writeReminderMode("history-append", homeDir);
+
+    assert.equal(path, join(homeDir, ".pi", "agent", "settings.json"));
+    assert.deepEqual(resolveConfiguredProviders(homeDir), ["github-copilot", "openai"]);
+    assert.equal(resolveShowStatusLine(homeDir), false);
+    assert.equal(resolveReminderMode(homeDir), "history-append");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
