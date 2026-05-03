@@ -148,6 +148,49 @@ void test("injects ask_user policy and reminder into the system prompt without a
   assert.equal(result.message, undefined);
 });
 
+void test("history-append reminder mode appends a hidden message without registering a context hook", () => {
+  const previousCwd = process.cwd();
+  const previousHome = process.env.HOME;
+  const cwd = createTempDir();
+  const homeDir = createTempDir();
+
+  try {
+    writeJson(join(homeDir, ".pi", "agent", "settings.json"), {
+      copilotQueue: {
+        reminderMode: "history-append",
+      },
+    });
+    process.chdir(cwd);
+    process.env.HOME = homeDir;
+
+    const captured = createCaptured();
+    extension(createPi(captured));
+
+    const hook = captured.eventHandlers.get("before_agent_start");
+    const contextHook = captured.eventHandlers.get("context");
+    assert.ok(hook);
+    assert.equal(contextHook, undefined);
+
+    const result = hook?.(
+      { systemPrompt: "base prompt" },
+      { model: { provider: "github-copilot" } }
+    ) as { systemPrompt: string; message?: { content?: string } };
+
+    assert.match(result.systemPrompt, /call the ask_user tool/i);
+    assert.doesNotMatch(result.systemPrompt, /Copilot Queue protocol reminder:/i);
+    assert.match(result.message?.content ?? "", /Copilot Queue protocol reminder:/i);
+  } finally {
+    process.chdir(previousCwd);
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
 void test("forces required tool choice for managed provider payloads when ask_user is present", () => {
   const captured = createCaptured();
   extension(createPi(captured));

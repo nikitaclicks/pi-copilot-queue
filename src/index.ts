@@ -8,6 +8,7 @@ import { Type } from "@sinclair/typebox";
 import { buildCommandArgumentCompletions, buildHelpText, parseCommand } from "./commands.js";
 import {
   resolveCopilotQueueSettings,
+  type CopilotQueueReminderMode,
   writeGlobalConfiguredProviders,
   writeShowStatusLine,
 } from "./config.js";
@@ -27,8 +28,10 @@ import { notifyTerminal } from "./notify.js";
 import type { QueueState } from "./types.js";
 
 const STOP_RESPONSE = "stop";
+const REMINDER_MESSAGE_TYPE = `${STATE_ENTRY_TYPE}:reminder`;
 let configuredProviders: string[] = [];
 let showStatusLine = true;
+let reminderMode: CopilotQueueReminderMode = "system-prompt";
 
 export default function copilotQueueExtension(pi: ExtensionAPI) {
   refreshConfiguration();
@@ -117,9 +120,23 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     currentRunAskUserCallCount = 0;
     currentRunOtherToolCallCount = 0;
 
-    return {
-      systemPrompt: `${event.systemPrompt}\n\n${buildAskUserSystemPromptSuffix(state)}`,
+    const reminder = buildAskUserReminderMessage(state);
+    const result: {
+      systemPrompt: string;
+      message?: { customType: string; content: string; display: boolean };
+    } = {
+      systemPrompt: `${event.systemPrompt}\n\n${buildAskUserSystemPromptSuffix(state, reminderMode)}`,
     };
+
+    if (reminderMode === "history-append") {
+      result.message = {
+        customType: REMINDER_MESSAGE_TYPE,
+        content: reminder,
+        display: false,
+      };
+    }
+
+    return result;
   });
 
   onBeforeProviderRequest(pi, (event, ctx) => {
@@ -193,7 +210,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
     if (missedAskUser) {
       notify(
         ctx,
-        `Copilot Queue: run ended with a direct assistant reply and never called ask_user. Non-ask_user tools this run: ${currentRunOtherToolCallCount}. A stricter reminder will be injected into the system prompt on the next run.`,
+        `Copilot Queue: run ended with a direct assistant reply and never called ask_user. Non-ask_user tools this run: ${currentRunOtherToolCallCount}. A stricter reminder will be injected on the next run.`,
         "warning"
       );
     }
@@ -838,6 +855,7 @@ function buildSettingsSummaryText(state: QueueState): string {
     `- Managed providers: ${getConfiguredProviderLabel()}`,
     `- Busy input capture: ${state.captureInteractiveInput ? "on" : "off"}`,
     `- Status line: ${showStatusLine ? "on" : "off"}`,
+    `- Reminder mode: ${formatReminderModeLabel(reminderMode)}`,
     `- Empty-queue wait timeout: ${timeout}`,
     `- Fallback response: ${state.fallbackResponse}`,
     `- Warning thresholds: ${state.warningMinutes} minutes, ${state.warningToolCalls} ask_user calls`,
@@ -1158,10 +1176,15 @@ function formatWaitTimeoutLabel(seconds: number): string {
   return seconds === 0 ? "off" : `${seconds}s`;
 }
 
+function formatReminderModeLabel(mode: CopilotQueueReminderMode): string {
+  return mode === "history-append" ? "append to history" : "system prompt";
+}
+
 function refreshConfiguration(): void {
   const settings = resolveCopilotQueueSettings();
   configuredProviders = settings.providers;
   showStatusLine = settings.showStatusLine;
+  reminderMode = settings.reminderMode;
 }
 
 function formatComplianceRate(state: QueueState): string {
@@ -1217,7 +1240,14 @@ function truncateReplyPreview(text: string): string {
   return `${singleLine.slice(0, 117)}...`;
 }
 
-function buildAskUserSystemPromptSuffix(state: QueueState): string {
+function buildAskUserSystemPromptSuffix(
+  state: QueueState,
+  reminderMode: CopilotQueueReminderMode
+): string {
+  if (reminderMode === "history-append") {
+    return COPILOT_ASK_USER_POLICY;
+  }
+
   return [COPILOT_ASK_USER_POLICY, buildAskUserReminderMessage(state)].join("\n\n");
 }
 
