@@ -10,6 +10,7 @@ import {
   resolveCopilotQueueSettings,
   type CopilotQueueReminderMode,
   writeGlobalConfiguredProviders,
+  writeReminderMode,
   writeShowStatusLine,
 } from "./config.js";
 import {
@@ -427,6 +428,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
             getState: () => state,
             getShowStatusLine: () => showStatusLine,
             getConfiguredProviders: () => configuredProviders,
+            getReminderMode: () => reminderMode,
             onCaptureChange: (enabled) => {
               state = { ...state, captureInteractiveInput: enabled };
               persistState(pi, state);
@@ -438,6 +440,15 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
               refreshConfiguration();
               updateStatus(ctx, state, hasPendingAskUser());
               notify(ctx, `Global status line ${enabled ? "enabled" : "disabled"}.`);
+            },
+            onReminderModeChange: (mode) => {
+              writeReminderMode(mode);
+              refreshConfiguration();
+              updateStatus(ctx, state, hasPendingAskUser());
+              notify(
+                ctx,
+                `Global reminder mode: ${mode === "history-append" ? "append to history" : "system prompt"}.`
+              );
             },
             onProvidersChange: (providers) => {
               writeGlobalConfiguredProviders(providers);
@@ -870,8 +881,10 @@ async function openSettingsUi(
     getState: () => QueueState;
     getShowStatusLine: () => boolean;
     getConfiguredProviders: () => string[];
+    getReminderMode: () => CopilotQueueReminderMode;
     onCaptureChange: (enabled: boolean) => void;
     onShowStatusLineChange: (enabled: boolean) => void;
+    onReminderModeChange: (mode: CopilotQueueReminderMode) => void;
     onProvidersChange: (providers: string[]) => void;
     onWaitTimeoutChange: (seconds: number) => void;
     onFallbackChange: (fallbackResponse: string) => void;
@@ -887,6 +900,7 @@ async function openSettingsUi(
       `Managed providers: ${options.getConfiguredProviders().join(", ") || "(disabled)"}`,
       `Busy input capture: ${state.captureInteractiveInput ? "on" : "off"}`,
       `Status line: ${options.getShowStatusLine() ? "on" : "off"}`,
+      `Reminder mode: ${formatReminderModeLabel(options.getReminderMode())}`,
       `Empty-queue wait timeout: ${formatWaitTimeoutLabel(state.waitTimeoutSeconds)}`,
       `Fallback response: ${state.fallbackResponse}`,
       `Warning thresholds: ${state.warningMinutes}m / ${state.warningToolCalls} ask_user`,
@@ -916,6 +930,18 @@ async function openSettingsUi(
       const enabled = await selectOnOff(ctx, "Status line", options.getShowStatusLine());
       if (enabled !== undefined) {
         options.onShowStatusLineChange(enabled);
+      }
+      continue;
+    }
+
+    if (selection.startsWith("Reminder mode:")) {
+      const mode = await selectReminderMode(
+        ctx,
+        options.getReminderMode(),
+        state.captureInteractiveInput
+      );
+      if (mode !== undefined) {
+        options.onReminderModeChange(mode);
       }
       continue;
     }
@@ -1030,6 +1056,35 @@ async function selectOnOff(
   }
 
   return selection.endsWith("On");
+}
+
+async function selectReminderMode(
+  ctx: ExtensionContext,
+  currentMode: CopilotQueueReminderMode
+): Promise<CopilotQueueReminderMode | undefined> {
+  const selection = await ctx.ui.select(
+    "Reminder mode",
+    [
+      formatReminderModeLabel(currentMode),
+      "System prompt (default, always shown)",
+      "Append to history (history-append, only shown after missed direct replies)",
+      "Back",
+    ]
+  );
+
+  if (!selection || selection === "Back") {
+    return undefined;
+  }
+
+  if (selection === "System prompt (default, always shown)") {
+    return "system-prompt";
+  }
+
+  if (selection === "Append to history (history-append, only shown after missed direct replies)") {
+    return "history-append";
+  }
+
+  return undefined;
 }
 
 async function editWaitTimeoutSetting(

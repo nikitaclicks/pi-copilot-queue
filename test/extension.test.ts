@@ -1072,7 +1072,14 @@ void test("settings UI can update global providers", async () => {
     await captured.commandHandler?.(
       "settings",
       createCommandCtx(undefined, true, "github-copilot", undefined, {
-        select: ["Managed providers: github-copilot", "Set global providers", "Close"],
+        select: [
+          "Managed providers: github-copilot",
+          "Busy input capture: on",
+          "Status line: on",
+          "Reminder mode: system-prompt",
+          "Set global providers",
+          "Close",
+        ],
         input: ["openai anthropic"],
       })
     );
@@ -1105,7 +1112,12 @@ void test("settings UI can update warning thresholds", async () => {
   await captured.commandHandler?.(
     "settings",
     createCommandCtx(notifications, true, "github-copilot", undefined, {
-      select: ["Warning thresholds: 120m / 50 ask_user", "Close"],
+      select: [
+        "Warning thresholds: 120m / 50 ask_user",
+        "Autopilot: off",
+        "Autopilot prompts: 0",
+        "Close",
+      ],
       input: ["180", "75"],
     })
   );
@@ -1129,7 +1141,12 @@ void test("settings UI can update custom wait timeout after invalid input", asyn
   await captured.commandHandler?.(
     "settings",
     createCommandCtx(notifications, true, "github-copilot", undefined, {
-      select: ["Empty-queue wait timeout: off", "Custom value...", "Close"],
+      select: [
+        "Empty-queue wait timeout: off",
+        "Custom value...",
+        "Reminder mode: system-prompt",
+        "Close",
+      ],
       input: ["abc", "45"],
     })
   );
