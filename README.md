@@ -109,7 +109,8 @@ You can override that in `~/.pi/agent/settings.json`:
 {
   "copilotQueue": {
     "providers": ["github-copilot", "openai"],
-    "showStatusLine": true
+    "showStatusLine": true,
+    "reminderMode": "system-prompt"
   }
 }
 ```
@@ -130,6 +131,12 @@ Defaults:
 
 - `providers = ["github-copilot"]`
 - `showStatusLine = true`
+- `reminderMode = "system-prompt"`
+
+Reminder modes:
+
+- `"system-prompt"` (default): keep the `ask_user` reminder in the per-run system prompt only; this avoids adding reminder messages to chat history.
+- `"history-append"`: append the hidden reminder message on every managed-provider run without pruning or rewriting older reminder history.
 
 Use an empty array to disable provider interception entirely:
 
@@ -147,6 +154,16 @@ Hide the extension status line while keeping provider management enabled:
 {
   "copilotQueue": {
     "showStatusLine": false
+  }
+}
+```
+
+Append the hidden reminder to history on each managed-provider run instead of keeping it only in the system prompt:
+
+```json
+{
+  "copilotQueue": {
+    "reminderMode": "history-append"
   }
 }
 ```

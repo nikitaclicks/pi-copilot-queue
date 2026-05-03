@@ -4,11 +4,15 @@ import { dirname, join } from "node:path";
 
 export const DEFAULT_ACTIVE_PROVIDERS = ["github-copilot"] as const;
 export const DEFAULT_SHOW_STATUS_LINE = true;
+export const DEFAULT_REMINDER_MODE = "system-prompt" as const;
+
+export type CopilotQueueReminderMode = "system-prompt" | "history-append";
 
 interface CopilotQueueSettings {
   providers?: unknown;
   provider?: unknown;
   showStatusLine?: unknown;
+  reminderMode?: unknown;
 }
 
 interface PiSettingsFile {
@@ -18,6 +22,7 @@ interface PiSettingsFile {
 export interface ResolvedCopilotQueueSettings {
   providers: string[];
   showStatusLine: boolean;
+  reminderMode: CopilotQueueReminderMode;
 }
 
 export function resolveCopilotQueueSettings(
@@ -28,6 +33,7 @@ export function resolveCopilotQueueSettings(
   return {
     providers: readProviderOverride(globalSettings) ?? [...DEFAULT_ACTIVE_PROVIDERS],
     showStatusLine: readShowStatusLineOverride(globalSettings) ?? DEFAULT_SHOW_STATUS_LINE,
+    reminderMode: readReminderModeOverride(globalSettings) ?? DEFAULT_REMINDER_MODE,
   };
 }
 
@@ -37,6 +43,10 @@ export function resolveConfiguredProviders(homeDir: string = homedir()): string[
 
 export function resolveShowStatusLine(homeDir: string = homedir()): boolean {
   return resolveCopilotQueueSettings(homeDir).showStatusLine;
+}
+
+export function resolveReminderMode(homeDir: string = homedir()): CopilotQueueReminderMode {
+  return resolveCopilotQueueSettings(homeDir).reminderMode;
 }
 
 function readSettingsFile(path: string): PiSettingsFile | undefined {
@@ -86,6 +96,17 @@ function readShowStatusLineOverride(settings: PiSettingsFile | undefined): boole
   }
 
   return config.showStatusLine;
+}
+
+function readReminderModeOverride(
+  settings: PiSettingsFile | undefined
+): CopilotQueueReminderMode | undefined {
+  const config = settings?.copilotQueue;
+  if (!config || typeof config !== "object") {
+    return undefined;
+  }
+
+  return normalizeReminderMode(config.reminderMode);
 }
 
 export function writeGlobalConfiguredProviders(
@@ -160,4 +181,12 @@ function normalizeProvider(value: unknown): string | undefined {
   }
 
   return trimmed;
+}
+
+function normalizeReminderMode(value: unknown): CopilotQueueReminderMode | undefined {
+  if (value !== "system-prompt" && value !== "history-append") {
+    return undefined;
+  }
+
+  return value;
 }
