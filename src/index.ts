@@ -447,7 +447,7 @@ export default function copilotQueueExtension(pi: ExtensionAPI) {
               updateStatus(ctx, state, hasPendingAskUser());
               notify(
                 ctx,
-                `Global reminder mode: ${mode === "history-append" ? "append to history" : "system prompt"}.`
+                `Global reminder mode: ${mode === "history-append" ? "append to history" : "system prompt (add to system prompt only)"}.`
               );
             },
             onProvidersChange: (providers) => {
@@ -1066,8 +1066,8 @@ async function selectReminderMode(
     "Reminder mode",
     [
       formatReminderModeLabel(currentMode),
-      "System prompt (default, always shown)",
-      "Append to history (history-append, only shown after missed direct replies)",
+      "System prompt (default, add reminder to the system prompt only)",
+      "Append to history (add the reminder to the chat history after user messages, may increase tokens use)",
       "Back",
     ]
   );
@@ -1076,11 +1076,11 @@ async function selectReminderMode(
     return undefined;
   }
 
-  if (selection === "System prompt (default, always shown)") {
+  if (selection === "System prompt (default, add reminder to the system prompt only)") {
     return "system-prompt";
   }
 
-  if (selection === "Append to history (history-append, only shown after missed direct replies)") {
+  if (selection === "Append to history (add the reminder to the chat history after user messages, may increase tokens use)") {
     return "history-append";
   }
 
