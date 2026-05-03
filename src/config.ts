@@ -132,6 +132,27 @@ export function writeGlobalConfiguredProviders(
   return path;
 }
 
+export function writeReminderMode(
+  nextReminderMode: CopilotQueueReminderMode,
+  homeDir: string = homedir()
+): string {
+  const path = getGlobalSettingsPath(homeDir);
+  const existing = readSettingsFile(path);
+  const nextQueue: CopilotQueueSettings =
+    existing?.copilotQueue && typeof existing.copilotQueue === "object"
+      ? { ...existing.copilotQueue }
+      : {};
+
+  nextQueue.reminderMode = normalizeReminderMode(nextReminderMode) ?? nextReminderMode;
+
+  const nextSettings: PiSettingsFile = existing ? { ...existing } : {};
+  nextSettings.copilotQueue = nextQueue;
+
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
+  return path;
+}
+
 export function writeShowStatusLine(
   nextShowStatusLine: boolean,
   homeDir: string = homedir()
